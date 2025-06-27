@@ -26,7 +26,7 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, TensorDataset
 
 # Custom modules
-from models.features import FeatureEngineer
+from models.enhanced_features import EnhancedFeatureEngineer as FeatureEngineer
 from config.settings import Config
 
 warnings.filterwarnings('ignore')
@@ -120,7 +120,7 @@ class GPUEnsembleModel:
     def __init__(self, max_gpu_memory_mb=8192):
         self.max_gpu_memory = max_gpu_memory_mb
         self.models = {}
-        self.feature_engineer = FeatureEngineer(enable_gpu=False)  # Disable GPU for feature engineering
+        self.feature_engineer = FeatureEngineer(use_gpu=False)  # Disable GPU for feature engineering
         self.is_trained = False
         self.feature_importance = {}
 
@@ -199,12 +199,14 @@ class GPUEnsembleModel:
         y_train_all = []
 
         # Process symbols
+        print(f"DEBUG: Processing {len(train_data)} symbols for training")
         for symbol, df in train_data.items():
+            print(f"DEBUG: Processing {symbol} with {len(df)} rows")
             if len(df) < self.sequence_length + 100:
                 continue
 
             # Create features
-            features = self.feature_engineer.create_features(df, symbol)
+            features = self.feature_engineer.create_all_features(df, symbol)
 
             if features.empty:
                 continue
@@ -225,6 +227,7 @@ class GPUEnsembleModel:
             y_train_all.append(target)
 
         # Combine all data
+        print(f"DEBUG: Concatenating {len(X_train_all)} feature sets")
         X_train = pd.concat(X_train_all)
         y_train = pd.concat(y_train_all)
 
@@ -459,7 +462,7 @@ class GPUEnsembleModel:
             raise ValueError("Model must be trained before prediction")
 
         # Create features
-        features = self.feature_engineer.create_features(price_data, symbol)
+        features = self.feature_engineer.create_all_features(price_data, symbol)
 
         if features.empty or len(features) < self.sequence_length:
             return {

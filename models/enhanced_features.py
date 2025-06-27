@@ -18,6 +18,8 @@ try:
     CUPY_AVAILABLE = True
 except ImportError:
     CUPY_AVAILABLE = False
+    cp = None
+    cudf = None
 
 warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
@@ -149,9 +151,9 @@ class EnhancedFeatureEngineer:
 
         return features
 
-    def _create_features_gpu(self, df: cudf.DataFrame, symbol: str) -> cudf.DataFrame:
+    def _create_features_gpu(self, df: object, symbol: str) -> object:
         """GPU-accelerated feature creation"""
-        features = cudf.DataFrame(index=df.index)
+        features = object(index=df.index)
 
         # Convert to CuPy arrays for faster computation
         close = cp.asarray(df['close'].values)
@@ -181,11 +183,15 @@ class EnhancedFeatureEngineer:
 
         # Returns at multiple timeframes
         for period in [1, 2, 3, 5, 10, 20, 60]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'return_{period}d'] = df['close'].pct_change(period)
             features[f'log_return_{period}d'] = np.log(df['close'] / df['close'].shift(period))
 
         # Moving averages
         for period in [5, 10, 20, 50, 100, 200]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             if len(df) >= period:
                 sma = talib.SMA(close, timeperiod=period)
                 features[f'sma_{period}'] = sma
@@ -196,6 +202,8 @@ class EnhancedFeatureEngineer:
 
         # Exponential moving averages
         for period in [8, 12, 21, 26, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             if len(df) >= period:
                 ema = talib.EMA(close, timeperiod=period)
                 features[f'ema_{period}'] = ema
@@ -221,6 +229,8 @@ class EnhancedFeatureEngineer:
 
         # Support/Resistance levels
         for period in [10, 20, 50, 100]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             if len(df) >= period:
                 resistance = df['high'].rolling(period).max()
                 support = df['low'].rolling(period).min()
@@ -233,6 +243,8 @@ class EnhancedFeatureEngineer:
 
         # Price channels
         for period in [20, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             if len(df) >= period:
                 highest = df['high'].rolling(period).max()
                 lowest = df['low'].rolling(period).min()
@@ -259,6 +271,8 @@ class EnhancedFeatureEngineer:
 
         # Volume moving averages and ratios
         for period in [5, 10, 20, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             vol_ma = talib.SMA(volume, timeperiod=period)
             features[f'volume_ma_{period}'] = vol_ma
             features[f'volume_ratio_{period}'] = volume / vol_ma
@@ -319,6 +333,8 @@ class EnhancedFeatureEngineer:
 
         # ATR at multiple timeframes
         for period in [7, 14, 20, 30]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             atr = talib.ATR(high, low, close, timeperiod=period)
             features[f'atr_{period}'] = atr
             features[f'atr_pct_{period}'] = atr / close
@@ -329,6 +345,8 @@ class EnhancedFeatureEngineer:
 
         # Bollinger Bands with multiple parameters
         for period in [10, 20, 30]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             for std_dev in [1.5, 2, 2.5]:
                 upper, middle, lower = talib.BBANDS(close, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev)
                 suffix = f'{period}_{int(std_dev * 10)}'
@@ -345,6 +363,8 @@ class EnhancedFeatureEngineer:
 
         # Keltner Channels
         for period in [10, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             for mult in [1.5, 2, 2.5]:
                 ma = talib.EMA(close, timeperiod=period)
                 atr = talib.ATR(high, low, close, timeperiod=period)
@@ -360,6 +380,8 @@ class EnhancedFeatureEngineer:
         # Historical volatility
         returns = df['close'].pct_change()
         for period in [5, 10, 20, 30, 60]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'volatility_{period}d'] = returns.rolling(period).std() * np.sqrt(252)
 
             # Volatility of volatility
@@ -409,6 +431,8 @@ class EnhancedFeatureEngineer:
 
         # RSI with multiple periods
         for period in [7, 14, 21, 28]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             rsi = talib.RSI(close, timeperiod=period)
             features[f'rsi_{period}'] = rsi
             features[f'rsi_{period}_oversold'] = (rsi < 30).astype(int)
@@ -444,18 +468,26 @@ class EnhancedFeatureEngineer:
 
         # Williams %R
         for period in [10, 14, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'williams_r_{period}'] = talib.WILLR(high, low, close, timeperiod=period)
 
         # CCI
         for period in [14, 20, 30]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'cci_{period}'] = talib.CCI(high, low, close, timeperiod=period)
 
         # MFI
         for period in [14, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'mfi_{period}'] = talib.MFI(high, low, close, volume, timeperiod=period)
 
         # ADX and directional indicators
         for period in [14, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'adx_{period}'] = talib.ADX(high, low, close, timeperiod=period)
             features[f'plus_di_{period}'] = talib.PLUS_DI(high, low, close, timeperiod=period)
             features[f'minus_di_{period}'] = talib.MINUS_DI(high, low, close, timeperiod=period)
@@ -466,6 +498,8 @@ class EnhancedFeatureEngineer:
 
         # Aroon
         for period in [14, 25]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             aroon_up, aroon_down = talib.AROON(high, low, timeperiod=period)
             features[f'aroon_up_{period}'] = aroon_up
             features[f'aroon_down_{period}'] = aroon_down
@@ -476,10 +510,14 @@ class EnhancedFeatureEngineer:
 
         # ROC
         for period in [5, 10, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'roc_{period}'] = talib.ROC(close, timeperiod=period)
 
         # CMO
         for period in [14, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'cmo_{period}'] = talib.CMO(close, timeperiod=period)
 
         # PPO
@@ -487,6 +525,8 @@ class EnhancedFeatureEngineer:
 
         # TRIX
         for period in [14, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'trix_{period}'] = talib.TRIX(close, timeperiod=period)
 
         return features
@@ -548,6 +588,8 @@ class EnhancedFeatureEngineer:
 
         # Rolling statistics
         for period in [5, 10, 20, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             rolling_returns = df['close'].pct_change().rolling(period)
 
             # Higher moments
@@ -568,37 +610,51 @@ class EnhancedFeatureEngineer:
 
         # Hurst exponent
         for period in [20, 50, 100]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'hurst_{period}'] = df['close'].rolling(period).apply(
                 lambda x: self._calculate_hurst_exponent(x.values) if len(x) == period else 0.5
             )
 
         # Entropy
         for period in [20, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'entropy_{period}'] = returns.rolling(period).apply(
                 lambda x: stats.entropy(np.histogram(x, bins=10)[0] + 1e-10)
             )
 
         # Price efficiency (Variance Ratio Test)
         for period in [10, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'efficiency_ratio_{period}'] = self._calculate_efficiency_ratio(df['close'], period)
 
         # Z-score
         for period in [20, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             mean = df['close'].rolling(period).mean()
             std = df['close'].rolling(period).std()
             features[f'zscore_{period}'] = (df['close'] - mean) / (std + 1e-10)
 
         # Percentile rank
         for period in [20, 50, 100]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'percentile_rank_{period}'] = df['close'].rolling(period).rank(pct=True)
 
         # Mean reversion indicators
         for period in [20, 50]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             ma = df['close'].rolling(period).mean()
             features[f'mean_reversion_score_{period}'] = -abs(df['close'] - ma) / ma
 
         # Trend consistency
         for period in [10, 20]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             positive_days = (df['close'].pct_change() > 0).rolling(period).sum()
             features[f'trend_consistency_{period}'] = positive_days / period
 
@@ -672,6 +728,8 @@ class EnhancedFeatureEngineer:
 
         # Consecutive patterns
         for period in [3, 5]:
+            if len(df) < period + 10:  # Need extra data for calculation
+                continue
             features[f'consecutive_up_{period}'] = (df['close'] > df['open']).rolling(period).sum() == period
             features[f'consecutive_down_{period}'] = (df['close'] < df['open']).rolling(period).sum() == period
 
