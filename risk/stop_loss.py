@@ -1,4 +1,5 @@
 # risk/stop_loss.py
+# COMPLETE FILE - Replace your entire stop_loss.py with this
 
 import numpy as np
 import pandas as pd
@@ -19,9 +20,9 @@ class StopLossManager:
 
     def __init__(self):
         self.stop_types = ['fixed', 'trailing', 'volatility', 'time', 'breakeven']
-        self.default_stop_pct = Config.STOP_LOSS_PCT
-        self.profit_target_pct = Config.PROFIT_TARGET_PCT
-        self.trailing_activation_pct = Config.TRAILING_STOP_ACTIVATION_PCT
+        self.default_stop_pct = Config.DEFAULT_STOP_LOSS  # Fixed: was STOP_LOSS_PCT
+        self.profit_target_pct = Config.DEFAULT_TAKE_PROFIT  # Fixed: was PROFIT_TARGET_PCT
+        self.trailing_activation_pct = Config.TRAILING_STOP_ACTIVATION  # Fixed: was TRAILING_STOP_ACTIVATION_PCT
 
     def calculate_initial_stops(self, entry_price: float,
                                 volatility: float,
@@ -90,7 +91,7 @@ class StopLossManager:
             Updated stop information
         """
         entry_price = position['entry_price']
-        current_stop = position.get('stop_loss_price', entry_price * 0.97)
+        current_stop = position.get('stop_loss_price', entry_price * (1 - self.default_stop_pct))
 
         # Calculate profit
         profit_pct = (current_price - entry_price) / entry_price
@@ -106,7 +107,7 @@ class StopLossManager:
 
         # Breakeven stop
         if profit_pct >= 0.01 and current_stop < entry_price:
-            new_stop = position['breakeven_level']
+            new_stop = position.get('breakeven_level', entry_price * 1.002)
             stop_type = 'breakeven'
             logger.info(f"Moving {position['symbol']} stop to breakeven")
 
@@ -179,6 +180,12 @@ class StopLossManager:
 
         # Time-based stop
         entry_time = position.get('entry_time', current_time)
+        if isinstance(entry_time, str):
+            try:
+                entry_time = datetime.fromisoformat(entry_time)
+            except:
+                entry_time = current_time
+
         days_held = (current_time - entry_time).days
 
         if days_held >= 5:  # 5-day time stop
@@ -209,17 +216,17 @@ class StopLossManager:
                                         current_price: float) -> Dict:
         """Calculate current risk metrics for a position"""
         entry_price = position['entry_price']
-        stop_price = position.get('stop_loss_price', entry_price * 0.97)
-        shares = position['shares']
+        stop_price = position.get('stop_loss_price', entry_price * (1 - self.default_stop_pct))
+        shares = position.get('shares', position.get('qty', 0))
 
         # Current risk
-        price_risk = current_price - stop_price
+        price_risk = max(0, current_price - stop_price)
         dollar_risk = price_risk * shares
-        risk_pct = price_risk / current_price
+        risk_pct = price_risk / current_price if current_price > 0 else 0
 
         # Profit/Loss
         unrealized_pnl = (current_price - entry_price) * shares
-        unrealized_pnl_pct = (current_price - entry_price) / entry_price
+        unrealized_pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
 
         # Risk/Reward
         if 'target_1' in position:
@@ -233,15 +240,15 @@ class StopLossManager:
         high_since_entry = position.get('high_since_entry', current_price)
         low_since_entry = position.get('low_since_entry', current_price)
 
-        mfe = (high_since_entry - entry_price) / entry_price  # Max favorable excursion
-        mae = (entry_price - low_since_entry) / entry_price  # Max adverse excursion
+        mfe = (high_since_entry - entry_price) / entry_price if entry_price > 0 else 0  # Max favorable excursion
+        mae = (entry_price - low_since_entry) / entry_price if entry_price > 0 else 0  # Max adverse excursion
 
         return {
             'current_risk': dollar_risk,
             'risk_pct': risk_pct * 100,
             'unrealized_pnl': unrealized_pnl,
             'unrealized_pnl_pct': unrealized_pnl_pct * 100,
-            'distance_to_stop': ((current_price - stop_price) / current_price) * 100,
+            'distance_to_stop': ((current_price - stop_price) / current_price) * 100 if current_price > 0 else 0,
             'current_rr_ratio': current_rr_ratio,
             'mfe': mfe * 100,
             'mae': mae * 100,
@@ -331,6 +338,9 @@ class StopLossManager:
         low = price_data['low'].values
         close = price_data['close'].values
 
+        if len(high) < 2:
+            return (high[0] - low[0]) if len(high) > 0 else 0
+
         tr = np.maximum(
             high[1:] - low[1:],
             np.abs(high[1:] - close[:-1]),
@@ -340,7 +350,7 @@ class StopLossManager:
         if len(tr) >= period:
             atr = np.mean(tr[-period:])
         else:
-            atr = np.mean(tr)
+            atr = np.mean(tr) if len(tr) > 0 else (high[-1] - low[-1])
 
         return atr
 
@@ -363,7 +373,7 @@ class StopLossManager:
             min_price = future_prices['low'].min()
             max_price = future_prices['high'].max()
 
-            stop_distance = (entry - stop_price) / entry
+            stop_distance = (entry - stop_price) / entry if entry > 0 else 0
 
             if min_price <= entry * (1 - stop_distance):
                 losses += 1
@@ -392,7 +402,7 @@ class StopLossManager:
                 # Create trailing stop order
                 order = broker_api.submit_order(
                     symbol=position['symbol'],
-                    qty=position['shares'],
+                    qty=position.get('shares', position.get('qty', 0)),
                     side='sell',
                     type='trailing_stop',
                     trail_percent=position.get('trail_percent', 2.0),
@@ -402,7 +412,7 @@ class StopLossManager:
                 # Create regular stop order
                 order = broker_api.submit_order(
                     symbol=position['symbol'],
-                    qty=position['shares'],
+                    qty=position.get('shares', position.get('qty', 0)),
                     side='sell',
                     type='stop',
                     stop_price=position['stop_loss_price'],
@@ -431,7 +441,8 @@ class StopLossManager:
         for position in positions:
             symbol = position['symbol']
             if symbol in market_data:
-                current_price = market_data[symbol].get('price', position['entry_price'])
+                current_price = market_data[symbol].get('price',
+                                                        position.get('current_price', position.get('entry_price', 0)))
                 high_since_entry = market_data[symbol].get('high_since_entry', current_price)
 
                 # Update trailing stop
@@ -460,14 +471,13 @@ class StopLossManager:
         total_risk = 0
 
         for pos in positions:
-            risk_metrics = self.calculate_position_risk_metrics(
-                pos, pos.get('current_price', pos['entry_price'])
-            )
+            current_price = pos.get('current_price', pos.get('entry_price', 0))
+            risk_metrics = self.calculate_position_risk_metrics(pos, current_price)
 
             total_risk += risk_metrics['current_risk']
 
             report_lines.append(f"\n{pos['symbol']}:")
-            report_lines.append(f"  Entry: ${pos['entry_price']:.2f}")
+            report_lines.append(f"  Entry: ${pos.get('entry_price', 0):.2f}")
             report_lines.append(f"  Stop: ${risk_metrics['stop_price']:.2f} ({risk_metrics['risk_pct']:.1f}%)")
             report_lines.append(
                 f"  P&L: ${risk_metrics['unrealized_pnl']:.2f} ({risk_metrics['unrealized_pnl_pct']:.1f}%)")

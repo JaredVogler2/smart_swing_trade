@@ -41,7 +41,20 @@ from execution.broker_interface import BrokerInterface
 
 # Import monitoring
 from monitoring.performance import PerformanceTracker
-from monitoring.dashboard import TradingDashboard
+
+
+# Temporary dashboard placeholder for GPU testing
+class TradingDashboard:
+    """Temporary placeholder for dashboard"""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self):
+        print("Dashboard is temporarily disabled. Testing GPU monitoring...")
+        print("To test GPU monitoring, run: python main.py --mode train")
+
+#from monitoring.dashboard import TradingDashboard as TradingDashboard
 
 # Setup logging
 logging.basicConfig(
@@ -53,6 +66,65 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+def check_gpu_availability():
+    """Check and log GPU availability for TensorFlow and PyTorch"""
+
+    # Check TensorFlow GPU
+    print("\n" + "=" * 50)
+    print("GPU AVAILABILITY CHECK")
+    print("=" * 50)
+
+    try:
+        import tensorflow as tf
+        print(f"\nTensorFlow version: {tf.__version__}")
+
+        # List physical devices
+        gpus = tf.config.list_physical_devices('GPU')
+        print(f"TensorFlow GPUs available: {len(gpus)}")
+
+        if gpus:
+            for i, gpu in enumerate(gpus):
+                print(f"  GPU {i}: {gpu}")
+
+            # Check if TensorFlow is built with CUDA
+            print(f"TensorFlow built with CUDA: {tf.test.is_built_with_cuda()}")
+
+            # Test GPU with simple operation
+            with tf.device('/GPU:0'):
+                a = tf.constant([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+                b = tf.constant([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+                c = tf.matmul(a, b)
+                print(f"TensorFlow GPU test successful: {c.device}")
+        else:
+            print("No TensorFlow GPUs found!")
+
+    except Exception as e:
+        print(f"TensorFlow GPU check failed: {e}")
+
+    # Check PyTorch GPU
+    try:
+        import torch
+        print(f"\nPyTorch version: {torch.__version__}")
+        print(f"PyTorch CUDA available: {torch.cuda.is_available()}")
+
+        if torch.cuda.is_available():
+            print(f"PyTorch CUDA version: {torch.version.cuda}")
+            print(f"PyTorch GPU count: {torch.cuda.device_count()}")
+            print(f"PyTorch GPU name: {torch.cuda.get_device_name(0)}")
+            print(f"PyTorch GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024 ** 3:.2f} GB")
+
+            # Test PyTorch GPU
+            x = torch.rand(5, 3).cuda()
+            print(f"PyTorch GPU test successful: {x.device}")
+        else:
+            print("No PyTorch CUDA support!")
+
+    except Exception as e:
+        print(f"PyTorch GPU check failed: {e}")
+
+    print("=" * 50 + "\n")
 
 
 class SmartSwingTrader:
@@ -133,27 +205,83 @@ class SmartSwingTrader:
         """Train ML models on historical data"""
         logger.info("Starting model training...")
 
-        # Fetch training data for sample of watchlist
-        training_symbols = WATCHLIST[:50]  # Use first 50 for training
+        # Use ALL symbols in watchlist for training
+        training_symbols = WATCHLIST  # Use all 198 symbols
         training_data = {}
+        failed_symbols = []
 
-        for symbol in training_symbols:
-            logger.info(f"Fetching training data for {symbol}")
+        # Import yfinance for better historical data access
+        import yfinance as yf
 
-            # Get 2 years of data
-            bars = self.market_data.get_bars(
-                symbol, '1Day', limit=500
-            )
+        logger.info(f"Attempting to fetch data for {len(training_symbols)} symbols...")
 
-            if not bars.empty and len(bars) > 200:
-                training_data[symbol] = bars
+        for i, symbol in enumerate(training_symbols, 1):
+            if i % 10 == 0:
+                logger.info(f"Progress: {i}/{len(training_symbols)} symbols processed...")
 
-        if len(training_data) < 10:
-            logger.error("Insufficient training data")
+            try:
+                # Get 2 years of data using yfinance
+                ticker = yf.Ticker(symbol)
+                bars = ticker.history(period="2y")
+
+                if not bars.empty:
+                    # Standardize column names to lowercase
+                    bars.columns = [col.lower() for col in bars.columns]
+
+                    # Ensure we have the required OHLCV columns
+                    if all(col in bars.columns for col in ['open', 'high', 'low', 'close', 'volume']):
+                        bars = bars[['open', 'high', 'low', 'close', 'volume']]
+
+                        # Check if we have enough data (at least 200 days)
+                        if len(bars) > 200:
+                            training_data[symbol] = bars
+                        else:
+                            logger.debug(f"Insufficient data for {symbol}: only {len(bars)} days")
+                            failed_symbols.append((symbol, f"Only {len(bars)} days"))
+                    else:
+                        logger.debug(f"Missing required columns for {symbol}")
+                        failed_symbols.append((symbol, "Missing columns"))
+                else:
+                    logger.debug(f"No data returned for {symbol}")
+                    failed_symbols.append((symbol, "No data"))
+
+            except Exception as e:
+                logger.debug(f"Error fetching data for {symbol}: {e}")
+                # Try using Alpaca as fallback
+                try:
+                    bars = self.market_data.get_bars(
+                        symbol, '1Day', limit=1000
+                    )
+                    if not bars.empty and len(bars) > 200:
+                        training_data[symbol] = bars
+                    else:
+                        failed_symbols.append((symbol, str(e)))
+                except Exception as e2:
+                    logger.debug(f"Alpaca fallback also failed for {symbol}: {e2}")
+                    failed_symbols.append((symbol, f"Both sources failed: {str(e2)[:50]}"))
+
+        # Log summary
+        logger.info(f"\nData fetching complete:")
+        logger.info(f"- Total symbols: {len(training_symbols)}")
+        logger.info(f"- Successfully fetched: {len(training_data)}")
+        logger.info(f"- Failed: {len(failed_symbols)}")
+        logger.info(f"- Success rate: {len(training_data) / len(training_symbols) * 100:.1f}%")
+
+        if failed_symbols:
+            logger.info(f"\nFailed symbols: {[s[0] for s in failed_symbols[:10]]}..." if len(
+                failed_symbols) > 10 else f"Failed symbols: {[s[0] for s in failed_symbols]}")
+
+        # Require at least 95% of symbols to have valid data
+        min_symbols_required = int(len(training_symbols) * 0.95)
+
+        if len(training_data) < min_symbols_required:
+            logger.error(
+                f"Insufficient training data: got {len(training_data)} symbols, need at least {min_symbols_required} (95%)")
+            logger.info("Consider lowering the threshold or checking data sources")
             return False
 
         # Train the model
-        logger.info(f"Training on {len(training_data)} symbols...")
+        logger.info(f"\nTraining model on {len(training_data)} symbols...")
         self.ml_model.train(training_data)
 
         # Save the trained model
@@ -491,6 +619,9 @@ class SmartSwingTrader:
 
 def main():
     """Main entry point"""
+    # Run GPU check first
+    check_gpu_availability()
+
     parser = argparse.ArgumentParser(description='Smart Swing Trading System')
     parser.add_argument(
         '--mode',

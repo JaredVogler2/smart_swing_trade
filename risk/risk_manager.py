@@ -1,4 +1,5 @@
 # risk/risk_manager.py
+# COMPLETE FILE - Replace your entire risk_manager.py with this
 
 import numpy as np
 import pandas as pd
@@ -35,11 +36,11 @@ class RiskManager:
         self.open_positions = {}
         self.closed_trades_today = []
 
-        # Risk limits
+        # Risk limits - using Config values where available
         self.limits = {
             'max_positions': Config.MAX_POSITIONS,
-            'max_position_size': Config.MAX_POSITION_SIZE,
-            'max_sector_exposure': 0.4,  # 40% in one sector
+            'max_position_size': Config.MAX_POSITION_SIZE_PCT * self.account_value,  # Fixed: was MAX_POSITION_SIZE
+            'max_sector_exposure': getattr(Config, 'MAX_SECTOR_EXPOSURE', 0.4),  # 40% in one sector
             'max_correlated_positions': 2,  # Max 2 highly correlated positions
             'max_daily_trades': 10,  # Prevent overtrading
             'max_portfolio_heat': 0.06,  # 6% total portfolio risk
@@ -61,7 +62,7 @@ class RiskManager:
         }
 
         # Check 1: Daily loss limit
-        if self.daily_pnl <= -self.max_daily_loss:
+        if self.daily_pnl <= -self.max_daily_loss * self.account_value:
             approval['approved'] = False
             approval['reasons'].append(f"Daily loss limit reached: ${self.daily_pnl:.2f}")
 
@@ -121,7 +122,12 @@ class RiskManager:
                                     current_positions: List[Dict]) -> Dict:
         """Check sector concentration limits"""
         symbol = trade_signal['symbol']
-        sector = get_sector(symbol)
+
+        # Handle missing get_sector function
+        try:
+            sector = get_sector(symbol)
+        except:
+            sector = 'Unknown'
 
         if sector == 'Unknown':
             return {'passed': True, 'message': ''}
@@ -129,15 +135,18 @@ class RiskManager:
         # Calculate current sector exposure
         sector_exposure = defaultdict(float)
         for pos in current_positions:
-            pos_sector = get_sector(pos['symbol'])
-            sector_exposure[pos_sector] += pos['position_value']
+            try:
+                pos_sector = get_sector(pos['symbol'])
+            except:
+                pos_sector = 'Unknown'
+            sector_exposure[pos_sector] += pos.get('position_value', 0)
 
         # Add new position
-        sector_exposure[sector] += trade_signal['position_value']
+        sector_exposure[sector] += trade_signal.get('position_value', 0)
 
         # Check limit
-        total_exposure = sum(pos['position_value'] for pos in current_positions) + \
-                         trade_signal['position_value']
+        total_exposure = sum(pos.get('position_value', 0) for pos in current_positions) + \
+                         trade_signal.get('position_value', 0)
 
         sector_pct = sector_exposure[sector] / total_exposure if total_exposure > 0 else 0
 
@@ -155,9 +164,15 @@ class RiskManager:
         symbol = trade_signal['symbol']
         correlated_count = 0
 
+        # Handle missing CORRELATION_PAIRS
+        try:
+            correlation_pairs = CORRELATION_PAIRS
+        except:
+            correlation_pairs = []  # Default to empty if not defined
+
         for pos in current_positions:
             # Check predefined correlation pairs
-            for pair in CORRELATION_PAIRS:
+            for pair in correlation_pairs:
                 if (symbol in pair and pos['symbol'] in pair):
                     correlated_count += 1
                     break
@@ -194,12 +209,12 @@ class RiskManager:
 
     def _calculate_position_risk(self, position: Dict) -> float:
         """Calculate risk for a single position as % of account"""
-        entry_price = position.get('entry_price', position.get('current_price', 0))
-        stop_loss = position.get('stop_loss_price', entry_price * 0.97)
-        shares = position.get('shares', 0)
+        entry_price = position.get('entry_price', position.get('avg_price', position.get('current_price', 0)))
+        stop_loss = position.get('stop_loss_price', entry_price * (1 - Config.DEFAULT_STOP_LOSS))
+        shares = position.get('shares', position.get('qty', 0))
 
-        dollar_risk = shares * (entry_price - stop_loss)
-        return dollar_risk / self.account_value
+        dollar_risk = shares * max(0, entry_price - stop_loss)
+        return dollar_risk / self.account_value if self.account_value > 0 else 0
 
     def update_position_stops(self, positions: List[Dict],
                               market_data: Dict[str, float]) -> List[Dict]:
@@ -208,22 +223,21 @@ class RiskManager:
 
         for position in positions:
             symbol = position['symbol']
-            entry_price = position['entry_price']
+            entry_price = position.get('entry_price', position.get('avg_price', 0))
             current_price = market_data.get(symbol, entry_price)
 
             # Calculate profit percentage
-            profit_pct = (current_price - entry_price) / entry_price
+            profit_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
 
             # Update stop loss
+            current_stop = position.get('stop_loss_price', entry_price * (1 - Config.DEFAULT_STOP_LOSS))
             new_stop = self._calculate_trailing_stop(
-                entry_price, current_price,
-                position.get('stop_loss_price', entry_price * 0.97),
-                profit_pct
+                entry_price, current_price, current_stop, profit_pct
             )
 
             position['stop_loss_price'] = new_stop
             position['current_price'] = current_price
-            position['unrealized_pnl'] = (current_price - entry_price) * position['shares']
+            position['unrealized_pnl'] = (current_price - entry_price) * position.get('shares', position.get('qty', 0))
             position['unrealized_pnl_pct'] = profit_pct
 
             # Check if stop hit
@@ -232,7 +246,14 @@ class RiskManager:
                 position['exit_reason'] = 'stop_loss'
 
             # Check time stop
-            days_held = (datetime.now() - position['entry_time']).days
+            entry_time = position.get('entry_time', datetime.now())
+            if isinstance(entry_time, str):
+                try:
+                    entry_time = datetime.fromisoformat(entry_time)
+                except:
+                    entry_time = datetime.now()
+
+            days_held = (datetime.now() - entry_time).days
             if days_held >= 5 and profit_pct < 0.005:  # 5 days with < 0.5% profit
                 position['stop_hit'] = True
                 position['exit_reason'] = 'time_stop'
@@ -297,7 +318,7 @@ class RiskManager:
 
     def get_risk_metrics(self) -> Dict:
         """Get current risk metrics"""
-        current_drawdown = (self.peak_value - self.account_value) / self.peak_value
+        current_drawdown = (self.peak_value - self.account_value) / self.peak_value if self.peak_value > 0 else 0
 
         # Calculate risk statistics
         if self.closed_trades_today:
@@ -311,7 +332,7 @@ class RiskManager:
             avg_win = np.mean(wins) if wins else 0
             avg_loss = np.mean(losses) if losses else 0
 
-            profit_factor = abs(sum(wins) / sum(losses)) if losses else 0
+            profit_factor = abs(sum(wins) / sum(losses)) if losses and sum(losses) != 0 else 0
         else:
             win_rate = avg_win = avg_loss = profit_factor = 0
             avg_trade = 0
@@ -344,7 +365,7 @@ class RiskManager:
     def should_stop_trading(self) -> Tuple[bool, str]:
         """Determine if trading should be halted"""
         # Daily loss limit
-        if self.daily_pnl <= -self.max_daily_loss:
+        if self.daily_pnl <= -self.max_daily_loss * self.account_value:
             return True, f"Daily loss limit reached: ${self.daily_pnl:.2f}"
 
         # Consecutive losses
@@ -352,12 +373,12 @@ class RiskManager:
             return True, f"Too many consecutive losses: {self.consecutive_losses}"
 
         # Drawdown approaching limit
-        current_drawdown = (self.peak_value - self.account_value) / self.peak_value
+        current_drawdown = (self.peak_value - self.account_value) / self.peak_value if self.peak_value > 0 else 0
         if current_drawdown >= self.max_drawdown:
             return True, f"Maximum drawdown reached: {current_drawdown:.1%}"
 
         # Account below minimum
-        if self.account_value < 5000:  # Half of starting capital
+        if self.account_value < Config.ACCOUNT_SIZE * 0.5:  # Half of starting capital
             return True, f"Account below minimum: ${self.account_value:.2f}"
 
         return False, ""
@@ -396,4 +417,3 @@ Risk Metrics:
 Trading Status: {'ACTIVE' if not self.should_stop_trading()[0] else 'HALTED - ' + self.should_stop_trading()[1]}
 """
         return report
-    

@@ -123,8 +123,8 @@ class OrderManager:
 
             self.active_orders[order.id] = order_info
 
-            logger.info(f"Entry order submitted: {symbol} - {shares} shares @ "
-                        f"{'market' if order_type == 'market' else f'${order_params.get('limit_price', 0):.2f}'}")
+            price_str = 'market' if order_type == 'market' else f'${order_params.get("limit_price", 0):.2f}'
+            logger.info(f"Entry order submitted: {symbol} - {shares} shares @ {price_str}")
 
             return {
                 'success': True,

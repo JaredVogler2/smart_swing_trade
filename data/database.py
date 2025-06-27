@@ -398,8 +398,6 @@ class Database:
             conn.commit()
 
     @contextmanager
-
-    @contextmanager
     def _get_connection(self):
         """Thread-safe connection context manager"""
         conn = sqlite3.connect(self.db_path, timeout=30.0)

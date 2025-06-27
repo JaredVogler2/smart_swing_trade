@@ -1,7 +1,7 @@
 # config/watchlist.py
 
 """
-188 high-liquidity stocks for the trading system
+198 high-liquidity stocks for the trading system
 Selected based on:
 - Market cap > $10B
 - Average daily volume > 1M shares
@@ -113,7 +113,7 @@ def get_sector(symbol):
 
 def validate_watchlist():
     """Validate watchlist integrity"""
-    assert len(WATCHLIST) == 188, f"Watchlist should have 188 stocks, found {len(WATCHLIST)}"
+    assert len(WATCHLIST) == 198, f"Watchlist should have 198 stocks, found {len(WATCHLIST)}"
     assert len(WATCHLIST) == len(set(WATCHLIST)), "Duplicate symbols in watchlist"
     return True
 

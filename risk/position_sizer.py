@@ -1,4 +1,5 @@
 # risk/position_sizer.py
+# COMPLETE FILE - Replace your entire position_sizer.py with this
 
 import numpy as np
 import pandas as pd
@@ -21,10 +22,10 @@ class PositionSizer:
     def __init__(self, account_value: float = None):
         self.account_value = account_value or Config.ACCOUNT_SIZE
         self.min_position = Config.MIN_POSITION_SIZE
-        self.max_position = Config.MAX_POSITION_SIZE
-        self.target_position = Config.TARGET_POSITION_SIZE
+        self.max_position = Config.MAX_POSITION_SIZE_PCT * self.account_value  # Fixed: was MAX_POSITION_SIZE
+        self.target_position = 0.05 * self.account_value  # Fixed: TARGET_POSITION_SIZE doesn't exist, using 5%
         self.max_positions = Config.MAX_POSITIONS
-        self.kelly_fraction = 0.25  # Use 25% of Kelly
+        self.kelly_fraction = Config.KELLY_FRACTION if hasattr(Config, 'KELLY_FRACTION') else 0.25  # Use 25% of Kelly
 
         # Track position history for adaptive sizing
         self.position_history = []
@@ -88,7 +89,7 @@ class PositionSizer:
         position_value = shares * current_price
 
         # Calculate risk metrics
-        stop_loss_price = current_price * (1 - Config.STOP_LOSS_PCT)
+        stop_loss_price = current_price * (1 - Config.DEFAULT_STOP_LOSS)  # Fixed: was STOP_LOSS_PCT
         dollar_risk = shares * (current_price - stop_loss_price)
         portfolio_risk_pct = dollar_risk / self.account_value
 
@@ -98,7 +99,7 @@ class PositionSizer:
             'position_value': position_value,
             'position_pct': position_value / self.account_value,
             'stop_loss_price': stop_loss_price,
-            'take_profit_price': current_price * (1 + Config.PROFIT_TARGET_PCT),
+            'take_profit_price': current_price * (1 + Config.DEFAULT_TAKE_PROFIT),  # Fixed: was PROFIT_TARGET_PCT
             'dollar_risk': dollar_risk,
             'portfolio_risk_pct': portfolio_risk_pct,
             'kelly_fraction_used': self.kelly_fraction,
@@ -111,8 +112,9 @@ class PositionSizer:
         # Sum current position values
         current_exposure = sum(pos.get('position_value', 0) for pos in current_positions)
 
-        # Reserve cash
-        cash_reserve = self.account_value * Config.CASH_RESERVE_PCT
+        # Reserve cash (default to 10% if not in config)
+        cash_reserve_pct = getattr(Config, 'CASH_RESERVE_PCT', 0.1)
+        cash_reserve = self.account_value * cash_reserve_pct
 
         # Available capital
         available = self.account_value - current_exposure - cash_reserve
@@ -132,7 +134,7 @@ class PositionSizer:
             q = probability of losing (1-p)
         """
         if avg_loss is None:
-            avg_loss = Config.STOP_LOSS_PCT
+            avg_loss = Config.DEFAULT_STOP_LOSS
 
         # Ensure valid inputs
         if win_prob <= 0 or win_prob >= 1 or avg_loss <= 0:
@@ -333,7 +335,8 @@ class PositionSizer:
         # Allocate to best opportunities first
         allocations = []
         total_risk = 0
-        available_capital = self.account_value * (1 - Config.CASH_RESERVE_PCT)
+        cash_reserve_pct = getattr(Config, 'CASH_RESERVE_PCT', 0.1)
+        available_capital = self.account_value * (1 - cash_reserve_pct)
 
         for signal in signals_sorted:
             if len(allocations) >= Config.MAX_POSITIONS:
@@ -350,3 +353,76 @@ class PositionSizer:
                     available_capital -= position['position_value']
 
         return allocations
+
+    def rebalance_positions(self, positions: List[Dict], target_weights: Dict[str, float]) -> Dict[str, int]:
+        """
+        Calculate trades needed to rebalance portfolio
+
+        Args:
+            positions: Current positions
+            target_weights: Target weights by symbol
+
+        Returns:
+            Dictionary of symbols to share changes
+        """
+        rebalance_trades = {}
+
+        # Current weights
+        current_weights = {}
+        total_value = sum(p.get('market_value', p.get('position_value', 0)) for p in positions)
+
+        if total_value == 0:
+            return rebalance_trades
+
+        for position in positions:
+            symbol = position['symbol']
+            value = position.get('market_value', position.get('position_value', 0))
+            weight = value / total_value
+            current_weights[symbol] = weight
+
+        # Calculate required trades
+        for symbol, target_weight in target_weights.items():
+            current_weight = current_weights.get(symbol, 0)
+            weight_diff = target_weight - current_weight
+
+            # Calculate share difference
+            target_value = self.account_value * target_weight
+            current_value = self.account_value * current_weight
+            value_diff = target_value - current_value
+
+            # Get current price (would need market data in practice)
+            current_price = next((p.get('current_price', p.get('avg_price', 0))
+                                  for p in positions if p['symbol'] == symbol), 0)
+
+            if current_price > 0:
+                share_diff = int(value_diff / current_price)
+                if abs(share_diff) > 0:
+                    rebalance_trades[symbol] = share_diff
+
+        return rebalance_trades
+
+    def update_account_size(self, new_size: float):
+        """Update account size for position calculations"""
+        old_size = self.account_value
+        self.account_value = new_size
+
+        # Update position limits based on new account size
+        self.max_position = Config.MAX_POSITION_SIZE_PCT * self.account_value
+        self.target_position = 0.05 * self.account_value  # 5% target
+
+        logger.info(f"Account size updated: ${old_size:,.2f} -> ${new_size:,.2f}")
+
+    def get_position_metrics(self) -> Dict:
+        """Get current position sizing metrics"""
+        return {
+            'account_size': self.account_value,
+            'max_position': self.max_position,
+            'max_position_pct': self.max_position / self.account_value,
+            'target_position': self.target_position,
+            'target_position_pct': self.target_position / self.account_value,
+            'min_position': self.min_position,
+            'risk_per_trade': Config.RISK_PER_TRADE,
+            'max_positions': self.max_positions,
+            'kelly_fraction': self.kelly_fraction,
+            'use_kelly': Config.USE_KELLY_CRITERION if hasattr(Config, 'USE_KELLY_CRITERION') else True
+        }

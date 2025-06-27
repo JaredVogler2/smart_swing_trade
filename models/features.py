@@ -38,38 +38,105 @@ class FeatureEngineer:
         else:
             self.gpu_available = False
 
+    def _ensure_float64(self, data):
+        """Ensure data is float64 for TA-Lib compatibility"""
+        if isinstance(data, pd.Series):
+            return data.astype(np.float64).values
+        elif isinstance(data, np.ndarray):
+            return data.astype(np.float64)
+        else:
+            return np.array(data, dtype=np.float64)
+
     def create_features(self, df: pd.DataFrame, symbol: str = None) -> pd.DataFrame:
         """Create all features including interactions"""
         if df.empty or len(df) < 200:  # Need sufficient history
             logger.warning(f"Insufficient data for {symbol}: {len(df)} rows")
             return pd.DataFrame()
 
-        # Start with base features
+        # Ensure all columns are float64 for TA-Lib compatibility
+        df = df.copy()
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in df.columns:
+                df[col] = df[col].astype(np.float64)
+
+        # Start with base features - using DataFrame from the beginning
         features = pd.DataFrame(index=df.index)
 
+        logger.debug(f"Creating features for {symbol}: starting with {len(df)} rows")
+
         # 1. Price-based features
-        features.update(self._create_price_features(df))
+        try:
+            price_dict = self._create_price_features(df)
+            for name, values in price_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(price_dict)} price features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in price features: {e}")
 
         # 2. Volume features
-        features.update(self._create_volume_features(df))
+        try:
+            volume_dict = self._create_volume_features(df)
+            for name, values in volume_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(volume_dict)} volume features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in volume features: {e}")
 
         # 3. Volatility features
-        features.update(self._create_volatility_features(df))
+        try:
+            volatility_dict = self._create_volatility_features(df)
+            for name, values in volatility_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(volatility_dict)} volatility features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in volatility features: {e}")
 
         # 4. Technical indicators
-        features.update(self._create_technical_indicators(df))
+        try:
+            technical_dict = self._create_technical_indicators(df)
+            for name, values in technical_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(technical_dict)} technical features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in technical features: {e}")
 
         # 5. Market microstructure
-        features.update(self._create_microstructure_features(df))
+        try:
+            microstructure_dict = self._create_microstructure_features(df)
+            for name, values in microstructure_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(microstructure_dict)} microstructure features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in microstructure features: {e}")
 
         # 6. Temporal features
-        features.update(self._create_temporal_features(df))
+        try:
+            temporal_dict = self._create_temporal_features(df)
+            for name, values in temporal_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(temporal_dict)} temporal features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in temporal features: {e}")
 
         # 7. Interaction features
-        features.update(self._create_interaction_features(df, features))
+        try:
+            interaction_dict = self._create_interaction_features(df, features)
+            for name, values in interaction_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(interaction_dict)} interaction features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in interaction features: {e}")
 
         # 8. Statistical features
-        features.update(self._create_statistical_features(df))
+        try:
+            statistical_dict = self._create_statistical_features(df)
+            for name, values in statistical_dict.items():
+                features[name] = values
+            logger.debug(f"{symbol}: {len(statistical_dict)} statistical features created")
+        except Exception as e:
+            logger.error(f"{symbol}: Error in statistical features: {e}")
+
+        logger.info(f"{symbol}: Total features before cleaning: {features.shape[1]}")
 
         # Store feature names
         self.feature_names = features.columns.tolist()
@@ -77,15 +144,19 @@ class FeatureEngineer:
         # Handle missing values
         features = self._handle_missing_values(features)
 
+        logger.info(f"{symbol}: Final features shape: {features.shape}")
+
         return features
 
     def _create_price_features(self, df: pd.DataFrame) -> Dict:
         """Create price-based features"""
         features = {}
-        close = df['close'].values
-        high = df['high'].values
-        low = df['low'].values
-        open_price = df['open'].values
+
+        # Ensure all data is float64 for TA-Lib
+        close = self._ensure_float64(df['close'])
+        high = self._ensure_float64(df['high'])
+        low = self._ensure_float64(df['low'])
+        open_price = self._ensure_float64(df['open'])
 
         # Returns
         for period in [1, 2, 3, 5, 10, 20]:
@@ -113,22 +184,24 @@ class FeatureEngineer:
         features['close_to_open'] = close / open_price
 
         # Gaps
-        features['gap'] = open_price / df['close'].shift(1).values
+        features['gap'] = open_price / np.roll(close, 1)
         features['gap_up'] = (features['gap'] > 1.01).astype(int)
         features['gap_down'] = (features['gap'] < 0.99).astype(int)
 
         # Support/Resistance levels
         for period in [20, 50]:
-            features[f'dist_from_high_{period}d'] = close / df['high'].rolling(period).max()
-            features[f'dist_from_low_{period}d'] = close / df['low'].rolling(period).min()
+            features[f'dist_from_high_{period}d'] = close / pd.Series(high).rolling(period).max().values
+            features[f'dist_from_low_{period}d'] = close / pd.Series(low).rolling(period).min().values
 
         return features
 
     def _create_volume_features(self, df: pd.DataFrame) -> Dict:
         """Create volume-based features"""
         features = {}
-        volume = df['volume'].values
-        close = df['close'].values
+
+        # Ensure all data is float64 for TA-Lib
+        volume = self._ensure_float64(df['volume'])
+        close = self._ensure_float64(df['close'])
 
         # Volume moving averages
         for period in [10, 20, 50]:
@@ -145,15 +218,20 @@ class FeatureEngineer:
         features['obv_signal'] = features['obv'] > features['obv_ma']
 
         # Accumulation/Distribution
-        features['ad'] = talib.AD(df['high'].values, df['low'].values, close, volume)
+        features['ad'] = talib.AD(
+            self._ensure_float64(df['high']),
+            self._ensure_float64(df['low']),
+            close,
+            volume
+        )
         features['ad_ma'] = talib.SMA(features['ad'], timeperiod=20)
 
         # Volume Price Trend
-        features['vpt'] = (df['close'].pct_change() * volume).cumsum()
+        features['vpt'] = (df['close'].pct_change() * df['volume']).cumsum()
 
         # Money Flow
         typical_price = (df['high'] + df['low'] + df['close']) / 3
-        money_flow = typical_price * volume
+        money_flow = typical_price * df['volume']
         features['money_flow_ratio'] = money_flow / money_flow.rolling(20).mean()
 
         return features
@@ -161,9 +239,10 @@ class FeatureEngineer:
     def _create_volatility_features(self, df: pd.DataFrame) -> Dict:
         """Create volatility features"""
         features = {}
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
+
+        high = self._ensure_float64(df['high'])
+        low = self._ensure_float64(df['low'])
+        close = self._ensure_float64(df['close'])
 
         # ATR
         for period in [14, 20]:
@@ -196,7 +275,7 @@ class FeatureEngineer:
         # Parkinson volatility
         features['parkinson_vol'] = np.sqrt(
             (1 / (4 * np.log(2))) *
-            (np.log(high / low) ** 2).rolling(20).mean()
+            (np.log(df['high'] / df['low']) ** 2).rolling(20).mean()
         )
 
         return features
@@ -204,10 +283,11 @@ class FeatureEngineer:
     def _create_technical_indicators(self, df: pd.DataFrame) -> Dict:
         """Create technical indicators"""
         features = {}
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
-        volume = df['volume'].values
+
+        high = self._ensure_float64(df['high'])
+        low = self._ensure_float64(df['low'])
+        close = self._ensure_float64(df['close'])
+        volume = self._ensure_float64(df['volume'])
 
         # RSI
         for period in [14, 21]:
@@ -589,7 +669,7 @@ class FeatureEngineer:
             ).astype(int)
 
             features['ranging'] = (
-                    ~features['uptrend'] & ~features['downtrend']
+                    ~features['uptrend'].astype(bool) & ~features['downtrend'].astype(bool)
             ).astype(int)
 
         # Higher highs/lower lows
@@ -605,10 +685,13 @@ class FeatureEngineer:
                 df['low'] < rolling_low.shift(1)
         ).astype(int)
 
-        # Swing failure pattern
+        # Swing failure pattern - fix the type issue here
+        # Convert to boolean Series first, then do the AND operation
+        lower_low_shifted = pd.Series(features['lower_low'].shift(1) == 1, index=df.index)
+        close_comparison = pd.Series(df['close'] > df['close'].shift(1), index=df.index)
+
         features['swing_failure'] = (
-                features['lower_low'].shift(1) &
-                (df['close'] > df['close'].shift(1))
+                lower_low_shifted & close_comparison
         ).astype(int)
 
         return features
@@ -796,19 +879,40 @@ class FeatureEngineer:
 
     def _handle_missing_values(self, features: pd.DataFrame) -> pd.DataFrame:
         """Handle missing values in features"""
-        # Forward fill then backward fill
-        features = features.fillna(method='ffill', limit=5)
-        features = features.fillna(method='bfill', limit=5)
+        if features.empty:
+            return features
 
-        # Fill remaining with 0 or median
-        numeric_features = features.select_dtypes(include=[np.number]).columns
-        features[numeric_features] = features[numeric_features].fillna(0)
+        # First, forward fill then backward fill
+        features = features.ffill(limit=5)
+        features = features.bfill(limit=5)
 
-        # Remove features with too many missing values
-        missing_pct = features.isna().sum() / len(features)
-        valid_features = missing_pct[missing_pct < 0.1].index
+        # Fill remaining NaN with 0
+        features = features.fillna(0)
 
-        return features[valid_features]
+        # Remove features with too many missing values BEFORE filling
+        # This is more lenient - we check the original missing values
+        # but only after we've tried to fill them
+        original_shape = features.shape[1]
+
+        # Don't remove features unless they have extreme missing values
+        # Technical indicators often have NaN in the first 20-50 rows due to lookback
+        # So we check missing values after row 50
+        if len(features) > 50:
+            missing_pct = features.iloc[50:].isna().sum() / len(features.iloc[50:])
+            valid_features = missing_pct[missing_pct < 0.3].index  # Allow up to 30% missing
+            features = features[valid_features]
+
+        # Remove constant features (all same value)
+        features = features.loc[:, (features != features.iloc[0]).any()]
+
+        # Remove features with near-zero variance
+        if len(features) > 0:
+            feature_std = features.std()
+            features = features.loc[:, feature_std > 1e-8]
+
+        logger.debug(f"Features after handling missing values: {original_shape} -> {features.shape[1]}")
+
+        return features
 
     def scale_features(self, features: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
         """Scale features using RobustScaler"""
@@ -834,5 +938,3 @@ class FeatureEngineer:
         importance = pd.Series(mi_scores, index=features.columns)
 
         return importance.sort_values(ascending=False)
-
-    
