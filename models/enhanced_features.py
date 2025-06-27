@@ -100,48 +100,79 @@ class EnhancedFeatureEngineer:
             logger.warning(f"Insufficient data for {symbol}: {len(df)} rows")
             return pd.DataFrame()
 
-        if self.use_gpu:
-            # Convert to GPU dataframe
-            df_gpu = cudf.from_pandas(df)
-            features = self._create_features_gpu(df_gpu, symbol)
-            # Convert back to pandas
-            return features.to_pandas()
+        if self.use_gpu and CUPY_AVAILABLE:
+            try:
+                # Convert to GPU dataframe
+                df_gpu = cudf.from_pandas(df)
+                features = self._create_features_gpu(df_gpu, symbol)
+                # Convert back to pandas
+                return features.to_pandas()
+            except Exception as e:
+                logger.warning(f"GPU feature creation failed, falling back to CPU: {e}")
+                return self._create_features_cpu(df, symbol)
         else:
             return self._create_features_cpu(df, symbol)
+
+    def _add_features_to_dataframe(self, features_df: pd.DataFrame, new_features: Dict,
+                                   index: pd.Index) -> None:
+        """Helper method to properly add features to DataFrame"""
+        for key, value in new_features.items():
+            if isinstance(value, pd.Series):
+                features_df[key] = value
+            elif isinstance(value, pd.DataFrame):
+                for col in value.columns:
+                    features_df[col] = value[col]
+            elif isinstance(value, np.ndarray):
+                if len(value) == len(index):
+                    features_df[key] = value
+                else:
+                    # Handle mismatched lengths by creating a Series with NaN
+                    series = pd.Series(index=index, dtype=float)
+                    series.iloc[:len(value)] = value
+                    features_df[key] = series
+            else:
+                # Scalar value
+                features_df[key] = value
 
     def _create_features_cpu(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
         """CPU-based feature creation"""
         features = pd.DataFrame(index=df.index)
 
+        # FIX: Ensure all price/volume data is float64 for TA-Lib
+        df = df.copy()
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in df.columns:
+                df[col] = df[col].astype('float64')
+
         # 1. Price-based features
-        features.update(self._create_price_features(df))
+        self._add_features_to_dataframe(features, self._create_price_features(df), df.index)
 
         # 2. Volume features
-        features.update(self._create_volume_features(df))
+        self._add_features_to_dataframe(features, self._create_volume_features(df), df.index)
 
         # 3. Volatility features
-        features.update(self._create_volatility_features(df))
+        self._add_features_to_dataframe(features, self._create_volatility_features(df), df.index)
 
         # 4. Technical indicators
-        features.update(self._create_technical_indicators(df))
+        self._add_features_to_dataframe(features, self._create_technical_indicators(df), df.index)
 
         # 5. Market microstructure
-        features.update(self._create_microstructure_features(df))
+        self._add_features_to_dataframe(features, self._create_microstructure_features(df), df.index)
 
         # 6. Statistical features
-        features.update(self._create_statistical_features(df))
+        self._add_features_to_dataframe(features, self._create_statistical_features(df), df.index)
 
         # 7. Pattern recognition features
-        features.update(self._create_pattern_features(df))
+        self._add_features_to_dataframe(features, self._create_pattern_features(df), df.index)
 
         # 8. Interaction features
-        features.update(self._create_interaction_features(df, features))
+        self._add_features_to_dataframe(features, self._create_interaction_features(df, features), df.index)
 
         # 9. Market regime features
-        features.update(self._create_regime_features(df))
+        self._add_features_to_dataframe(features, self._create_regime_features(df), df.index)
 
         # 10. Advanced ML features
-        features.update(self._create_ml_features(df, features))
+        self._add_features_to_dataframe(features, self._create_ml_features(df, features), df.index)
 
         # Store feature names
         self.feature_names = features.columns.tolist()
@@ -151,67 +182,83 @@ class EnhancedFeatureEngineer:
 
         return features
 
-    def _create_features_gpu(self, df: object, symbol: str) -> object:
+    def _create_features_gpu(self, df, symbol: str):
         """GPU-accelerated feature creation"""
-        features = object(index=df.index)
+        if CUPY_AVAILABLE:
+            features = cudf.DataFrame(index=df.index)
+        else:
+            # Fallback to pandas if GPU not available
+            return self._create_features_cpu(df, symbol)
 
         # Convert to CuPy arrays for faster computation
-        close = cp.asarray(df['close'].values)
-        high = cp.asarray(df['high'].values)
-        low = cp.asarray(df['low'].values)
-        open_price = cp.asarray(df['open'].values)
-        volume = cp.asarray(df['volume'].values)
+        if CUPY_AVAILABLE and cp is not None:
+            close = cp.asarray(df['close'].values)
+            high = cp.asarray(df['high'].values)
+            low = cp.asarray(df['low'].values)
+            open_price = cp.asarray(df['open'].values)
+            volume = cp.asarray(df['volume'].values)
 
-        # Price features using GPU
-        features = self._create_price_features_gpu(features, close, high, low, open_price)
+            # Price features using GPU
+            features = self._create_price_features_gpu(features, close, high, low, open_price)
 
-        # Volume features using GPU
-        features = self._create_volume_features_gpu(features, close, volume)
+            # Volume features using GPU
+            features = self._create_volume_features_gpu(features, close, volume)
 
-        # More GPU-accelerated features...
-        # (Implementation continues similar to CPU version but using CuPy)
+            # More GPU-accelerated features...
+            # (Implementation continues similar to CPU version but using CuPy)
 
-        return features
+            return features
+        else:
+            # Fallback to CPU
+            return self._create_features_cpu(df, symbol)
 
     def _create_price_features(self, df: pd.DataFrame) -> Dict:
         """Create price-based features"""
         features = {}
-        close = df['close'].values
-        high = df['high'].values
-        low = df['low'].values
-        open_price = df['open'].values
+
+        # Ensure float64 for TA-Lib
+        close = df['close'].astype('float64').values
+        high = df['high'].astype('float64').values
+        low = df['low'].astype('float64').values
+        open_price = df['open'].astype('float64').values
 
         # Returns at multiple timeframes
         for period in [1, 2, 3, 5, 10, 20, 60]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'return_{period}d'] = df['close'].pct_change(period)
             features[f'log_return_{period}d'] = np.log(df['close'] / df['close'].shift(period))
 
         # Moving averages
         for period in [5, 10, 20, 50, 100, 200]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             if len(df) >= period:
-                sma = talib.SMA(close, timeperiod=period)
-                features[f'sma_{period}'] = sma
-                features[f'price_to_sma_{period}'] = close / sma
+                try:
+                    sma = talib.SMA(close, timeperiod=period)
+                    features[f'sma_{period}'] = sma
+                    features[f'price_to_sma_{period}'] = close / sma
 
-                # MA slopes
-                features[f'sma_{period}_slope'] = (sma - talib.SMA(sma, 5)) / 5
+                    # MA slopes
+                    features[f'sma_{period}_slope'] = (sma - talib.SMA(sma.astype('float64'), 5)) / 5
+                except Exception as e:
+                    logger.warning(f"Error calculating SMA {period}: {e}")
+                    features[f'sma_{period}'] = close
+                    features[f'price_to_sma_{period}'] = 1.0
+                    features[f'sma_{period}_slope'] = 0.0
 
         # Exponential moving averages
         for period in [8, 12, 21, 26, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             if len(df) >= period:
-                ema = talib.EMA(close, timeperiod=period)
-                features[f'ema_{period}'] = ema
-                features[f'price_to_ema_{period}'] = close / ema
+                try:
+                    ema = talib.EMA(close, timeperiod=period)
+                    features[f'ema_{period}'] = ema
+                    features[f'price_to_ema_{period}'] = close / ema
+                except Exception as e:
+                    logger.warning(f"Error calculating EMA {period}: {e}")
+                    features[f'ema_{period}'] = close
+                    features[f'price_to_ema_{period}'] = 1.0
 
         # VWAP approximation
         typical_price = (high + low + close) / 3
-        features['vwap'] = (typical_price * df['volume']).rolling(20).sum() / df['volume'].rolling(20).sum()
+        features['vwap'] = (typical_price * df['volume'].astype('float64')).rolling(20).sum() / df['volume'].astype(
+            'float64').rolling(20).sum()
         features['price_to_vwap'] = close / features['vwap']
 
         # Price positions and ranges
@@ -229,8 +276,6 @@ class EnhancedFeatureEngineer:
 
         # Support/Resistance levels
         for period in [10, 20, 50, 100]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             if len(df) >= period:
                 resistance = df['high'].rolling(period).max()
                 support = df['low'].rolling(period).min()
@@ -243,8 +288,6 @@ class EnhancedFeatureEngineer:
 
         # Price channels
         for period in [20, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             if len(df) >= period:
                 highest = df['high'].rolling(period).max()
                 lowest = df['low'].rolling(period).min()
@@ -266,60 +309,97 @@ class EnhancedFeatureEngineer:
     def _create_volume_features(self, df: pd.DataFrame) -> Dict:
         """Create volume-based features"""
         features = {}
-        volume = df['volume'].values
-        close = df['close'].values
+
+        # FIX: Ensure float64 for TA-Lib
+        volume = df['volume'].astype('float64').values
+        close = df['close'].astype('float64').values
 
         # Volume moving averages and ratios
         for period in [5, 10, 20, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            vol_ma = talib.SMA(volume, timeperiod=period)
-            features[f'volume_ma_{period}'] = vol_ma
-            features[f'volume_ratio_{period}'] = volume / vol_ma
+            try:
+                vol_ma = talib.SMA(volume, timeperiod=period)
+                features[f'volume_ma_{period}'] = vol_ma
+                features[f'volume_ratio_{period}'] = volume / (vol_ma + 1e-10)
 
-            # Volume trend
-            features[f'volume_trend_{period}'] = talib.SMA(volume, period) / talib.SMA(volume, period * 2)
+                # Volume trend
+                vol_ma_double = talib.SMA(volume, timeperiod=period * 2)
+                features[f'volume_trend_{period}'] = vol_ma / (vol_ma_double + 1e-10)
+            except Exception as e:
+                logger.warning(f"Error calculating volume MA {period}: {e}")
+                features[f'volume_ma_{period}'] = volume
+                features[f'volume_ratio_{period}'] = 1.0
+                features[f'volume_trend_{period}'] = 1.0
 
         # Volume rate of change
-        features['volume_roc_5'] = talib.ROC(volume, timeperiod=5)
-        features['volume_roc_10'] = talib.ROC(volume, timeperiod=10)
+        try:
+            features['volume_roc_5'] = talib.ROC(volume, timeperiod=5)
+            features['volume_roc_10'] = talib.ROC(volume, timeperiod=10)
+        except Exception as e:
+            logger.warning(f"Error calculating volume ROC: {e}")
+            features['volume_roc_5'] = 0.0
+            features['volume_roc_10'] = 0.0
 
         # On Balance Volume
-        features['obv'] = talib.OBV(close, volume)
-        features['obv_ma'] = talib.SMA(features['obv'], timeperiod=20)
-        features['obv_signal'] = (features['obv'] > features['obv_ma']).astype(int)
-        features['obv_divergence'] = self._calculate_divergence(close, features['obv'])
+        try:
+            obv = talib.OBV(close, volume)
+            features['obv'] = obv
+            obv_series = pd.Series(obv)
+            features['obv_ma'] = talib.SMA(obv.astype('float64'), timeperiod=20)
+            features['obv_signal'] = (obv_series > features['obv_ma']).astype(int)
+            features['obv_divergence'] = self._calculate_divergence(close, obv_series)
+        except Exception as e:
+            logger.warning(f"Error calculating OBV: {e}")
+            features['obv'] = 0.0
+            features['obv_ma'] = 0.0
+            features['obv_signal'] = 0
+            features['obv_divergence'] = 0
 
         # Accumulation/Distribution
-        features['ad'] = talib.AD(df['high'].values, df['low'].values, close, volume)
-        features['ad_ma'] = talib.SMA(features['ad'], timeperiod=20)
-        features['ad_signal'] = (features['ad'] > features['ad_ma']).astype(int)
+        try:
+            ad = talib.AD(df['high'].astype('float64').values,
+                          df['low'].astype('float64').values,
+                          close, volume)
+            features['ad'] = ad
+            features['ad_ma'] = talib.SMA(ad.astype('float64'), timeperiod=20)
+            features['ad_signal'] = (features['ad'] > features['ad_ma']).astype(int)
+        except Exception as e:
+            logger.warning(f"Error calculating AD: {e}")
+            features['ad'] = 0.0
+            features['ad_ma'] = 0.0
+            features['ad_signal'] = 0
 
         # Chaikin Money Flow
-        features['cmf'] = talib.ADOSC(df['high'].values, df['low'].values, close, volume, fastperiod=3, slowperiod=10)
+        try:
+            features['cmf'] = talib.ADOSC(df['high'].astype('float64').values,
+                                          df['low'].astype('float64').values,
+                                          close, volume,
+                                          fastperiod=3, slowperiod=10)
+        except Exception as e:
+            logger.warning(f"Error calculating CMF: {e}")
+            features['cmf'] = 0.0
 
         # Volume Price Trend
-        features['vpt'] = (df['close'].pct_change() * volume).cumsum()
+        features['vpt'] = (df['close'].pct_change() * df['volume']).cumsum()
         features['vpt_ma'] = features['vpt'].rolling(20).mean()
 
         # Money Flow
-        typical_price = (df['high'] + df['low'] + df['close']) / 3
-        money_flow = typical_price * volume
+        typical_price = (df['high'].astype('float64') + df['low'].astype('float64') + df['close'].astype('float64')) / 3
+        money_flow = typical_price * df['volume'].astype('float64')
         features['money_flow_ratio'] = money_flow / money_flow.rolling(20).mean()
 
         # Volume profile
-        features['volume_concentration'] = volume.rolling(20).std() / volume.rolling(20).mean()
+        features['volume_concentration'] = df['volume'].rolling(20).std() / df['volume'].rolling(20).mean()
 
         # Price-Volume correlation
         features['pv_correlation'] = df['close'].rolling(20).corr(df['volume'])
 
         # Volume spike detection
-        vol_mean = volume.rolling(20).mean()
-        vol_std = volume.rolling(20).std()
-        features['volume_spike'] = ((volume - vol_mean) / vol_std > 2).astype(int)
+        vol_mean = df['volume'].rolling(20).mean()
+        vol_std = df['volume'].rolling(20).std()
+        features['volume_spike'] = ((df['volume'] - vol_mean) / (vol_std + 1e-10) > 2).astype(int)
 
         # Volume-weighted price momentum
-        features['vw_momentum'] = (close * volume).rolling(10).sum() / volume.rolling(10).sum()
+        features['vw_momentum'] = (df['close'] * df['volume']).rolling(10).sum() / df['volume'].rolling(10).sum()
         features['vw_momentum_change'] = features['vw_momentum'].pct_change(5)
 
         return features
@@ -327,61 +407,75 @@ class EnhancedFeatureEngineer:
     def _create_volatility_features(self, df: pd.DataFrame) -> Dict:
         """Create volatility features"""
         features = {}
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
+
+        # Ensure float64 for TA-Lib
+        high = df['high'].astype('float64').values
+        low = df['low'].astype('float64').values
+        close = df['close'].astype('float64').values
 
         # ATR at multiple timeframes
         for period in [7, 14, 20, 30]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            atr = talib.ATR(high, low, close, timeperiod=period)
-            features[f'atr_{period}'] = atr
-            features[f'atr_pct_{period}'] = atr / close
+            try:
+                atr = talib.ATR(high, low, close, timeperiod=period)
+                features[f'atr_{period}'] = atr
+                features[f'atr_pct_{period}'] = atr / close
 
-            # ATR bands
-            features[f'atr_upper_{period}'] = close + 2 * atr
-            features[f'atr_lower_{period}'] = close - 2 * atr
+                # ATR bands
+                features[f'atr_upper_{period}'] = close + 2 * atr
+                features[f'atr_lower_{period}'] = close - 2 * atr
+            except Exception as e:
+                logger.warning(f"Error calculating ATR {period}: {e}")
+                features[f'atr_{period}'] = 0.0
+                features[f'atr_pct_{period}'] = 0.0
 
         # Bollinger Bands with multiple parameters
         for period in [10, 20, 30]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             for std_dev in [1.5, 2, 2.5]:
-                upper, middle, lower = talib.BBANDS(close, timeperiod=period, nbdevup=std_dev, nbdevdn=std_dev)
-                suffix = f'{period}_{int(std_dev * 10)}'
+                try:
+                    upper, middle, lower = talib.BBANDS(close, timeperiod=period,
+                                                        nbdevup=std_dev, nbdevdn=std_dev)
+                    suffix = f'{period}_{int(std_dev * 10)}'
 
-                features[f'bb_upper_{suffix}'] = upper
-                features[f'bb_lower_{suffix}'] = lower
-                features[f'bb_middle_{suffix}'] = middle
-                features[f'bb_width_{suffix}'] = (upper - lower) / middle
-                features[f'bb_position_{suffix}'] = (close - lower) / (upper - lower + 1e-10)
+                    features[f'bb_upper_{suffix}'] = upper
+                    features[f'bb_lower_{suffix}'] = lower
+                    features[f'bb_middle_{suffix}'] = middle
+                    features[f'bb_width_{suffix}'] = (upper - lower) / (middle + 1e-10)
+                    features[f'bb_position_{suffix}'] = (close - lower) / (upper - lower + 1e-10)
 
-                # Bollinger Band squeeze
-                features[f'bb_squeeze_{suffix}'] = features[f'bb_width_{suffix}'] / features[
-                    f'bb_width_{suffix}'].rolling(50).mean()
+                    # Bollinger Band squeeze
+                    bb_width_series = pd.Series((upper - lower) / (middle + 1e-10))
+                    features[f'bb_squeeze_{suffix}'] = bb_width_series / bb_width_series.rolling(50).mean()
+                except Exception as e:
+                    logger.warning(f"Error calculating BB {period}_{std_dev}: {e}")
+                    suffix = f'{period}_{int(std_dev * 10)}'
+                    features[f'bb_upper_{suffix}'] = close
+                    features[f'bb_lower_{suffix}'] = close
+                    features[f'bb_middle_{suffix}'] = close
+                    features[f'bb_width_{suffix}'] = 0.0
+                    features[f'bb_position_{suffix}'] = 0.5
+                    features[f'bb_squeeze_{suffix}'] = 1.0
 
         # Keltner Channels
         for period in [10, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             for mult in [1.5, 2, 2.5]:
-                ma = talib.EMA(close, timeperiod=period)
-                atr = talib.ATR(high, low, close, timeperiod=period)
+                try:
+                    ma = talib.EMA(close, timeperiod=period)
+                    atr = talib.ATR(high, low, close, timeperiod=period)
 
-                features[f'kc_upper_{period}_{int(mult * 10)}'] = ma + (mult * atr)
-                features[f'kc_lower_{period}_{int(mult * 10)}'] = ma - (mult * atr)
-                features[f'kc_position_{period}_{int(mult * 10)}'] = (close - features[
-                    f'kc_lower_{period}_{int(mult * 10)}']) / \
-                                                                     (features[f'kc_upper_{period}_{int(mult * 10)}'] -
-                                                                      features[
-                                                                          f'kc_lower_{period}_{int(mult * 10)}'] + 1e-10)
+                    features[f'kc_upper_{period}_{int(mult * 10)}'] = ma + (mult * atr)
+                    features[f'kc_lower_{period}_{int(mult * 10)}'] = ma - (mult * atr)
+                    features[f'kc_position_{period}_{int(mult * 10)}'] = (close - features[
+                        f'kc_lower_{period}_{int(mult * 10)}']) / \
+                                                                         (features[
+                                                                              f'kc_upper_{period}_{int(mult * 10)}'] -
+                                                                          features[
+                                                                              f'kc_lower_{period}_{int(mult * 10)}'] + 1e-10)
+                except Exception as e:
+                    logger.warning(f"Error calculating KC {period}_{mult}: {e}")
 
         # Historical volatility
         returns = df['close'].pct_change()
         for period in [5, 10, 20, 30, 60]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'volatility_{period}d'] = returns.rolling(period).std() * np.sqrt(252)
 
             # Volatility of volatility
@@ -390,28 +484,29 @@ class EnhancedFeatureEngineer:
         # Parkinson volatility
         features['parkinson_vol'] = np.sqrt(
             252 * (1 / (4 * np.log(2))) *
-            (np.log(high / low) ** 2).rolling(20).mean()
+            pd.Series(np.log(high / low) ** 2).rolling(20).mean()
         )
 
         # Garman-Klass volatility
+        open_prices = df['open'].astype('float64').values
         features['garman_klass_vol'] = np.sqrt(
             252 * (
-                    0.5 * (np.log(high / low) ** 2).rolling(20).mean() -
-                    (2 * np.log(2) - 1) * (np.log(close / df['open'].values) ** 2).rolling(20).mean()
+                    0.5 * pd.Series(np.log(high / low) ** 2).rolling(20).mean() -
+                    (2 * np.log(2) - 1) * pd.Series(np.log(close / open_prices) ** 2).rolling(20).mean()
             )
         )
 
         # Rogers-Satchell volatility
         features['rogers_satchell_vol'] = np.sqrt(
-            252 * (
-                (np.log(high / close) * np.log(high / df['open'].values) +
-                 np.log(low / close) * np.log(low / df['open'].values)).rolling(20).mean()
-            )
+            252 * pd.Series(
+                np.log(high / close) * np.log(high / open_prices) +
+                np.log(low / close) * np.log(low / open_prices)
+            ).rolling(20).mean()
         )
 
         # Yang-Zhang volatility
-        overnight_var = (np.log(df['open'] / df['close'].shift(1)) ** 2).rolling(20).mean()
-        open_close_var = (np.log(close / df['open'].values) ** 2).rolling(20).mean()
+        overnight_var = pd.Series(np.log(df['open'] / df['close'].shift(1)) ** 2).rolling(20).mean()
+        open_close_var = pd.Series(np.log(close / open_prices) ** 2).rolling(20).mean()
         features['yang_zhang_vol'] = np.sqrt(252 * (overnight_var + 0.383 * open_close_var +
                                                     0.641 * features['rogers_satchell_vol'] ** 2))
 
@@ -424,110 +519,169 @@ class EnhancedFeatureEngineer:
     def _create_technical_indicators(self, df: pd.DataFrame) -> Dict:
         """Create technical indicators"""
         features = {}
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
-        volume = df['volume'].values
+
+        # Ensure float64 for TA-Lib
+        high = df['high'].astype('float64').values
+        low = df['low'].astype('float64').values
+        close = df['close'].astype('float64').values
+        volume = df['volume'].astype('float64').values
 
         # RSI with multiple periods
         for period in [7, 14, 21, 28]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            rsi = talib.RSI(close, timeperiod=period)
-            features[f'rsi_{period}'] = rsi
-            features[f'rsi_{period}_oversold'] = (rsi < 30).astype(int)
-            features[f'rsi_{period}_overbought'] = (rsi > 70).astype(int)
+            try:
+                rsi = talib.RSI(close, timeperiod=period)
+                features[f'rsi_{period}'] = rsi
+                features[f'rsi_{period}_oversold'] = (rsi < 30).astype(int)
+                features[f'rsi_{period}_overbought'] = (rsi > 70).astype(int)
 
-            # RSI divergence
-            features[f'rsi_{period}_divergence'] = self._calculate_divergence(close, rsi)
+                # RSI divergence
+                features[f'rsi_{period}_divergence'] = self._calculate_divergence(close, rsi)
+            except Exception as e:
+                logger.warning(f"Error calculating RSI {period}: {e}")
+                features[f'rsi_{period}'] = 50.0
+                features[f'rsi_{period}_oversold'] = 0
+                features[f'rsi_{period}_overbought'] = 0
+                features[f'rsi_{period}_divergence'] = 0
 
         # MACD variations
         for fast, slow, signal in [(12, 26, 9), (5, 35, 5), (8, 17, 9)]:
-            macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=fast, slowperiod=slow, signalperiod=signal)
-            suffix = f'{fast}_{slow}_{signal}'
+            try:
+                macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=fast,
+                                                          slowperiod=slow, signalperiod=signal)
+                suffix = f'{fast}_{slow}_{signal}'
 
-            features[f'macd_{suffix}'] = macd
-            features[f'macd_signal_{suffix}'] = macd_signal
-            features[f'macd_hist_{suffix}'] = macd_hist
-            features[f'macd_cross_{suffix}'] = ((macd > macd_signal) &
-                                                (macd.shift(1) <= macd_signal.shift(1))).astype(int)
+                features[f'macd_{suffix}'] = macd
+                features[f'macd_signal_{suffix}'] = macd_signal
+                features[f'macd_hist_{suffix}'] = macd_hist
+                features[f'macd_cross_{suffix}'] = ((macd > macd_signal) &
+                                                    (pd.Series(macd).shift(1) <= pd.Series(macd_signal).shift(
+                                                        1))).astype(int)
 
-            # MACD momentum
-            features[f'macd_momentum_{suffix}'] = macd_hist - macd_hist.shift(1)
+                # MACD momentum
+                features[f'macd_momentum_{suffix}'] = pd.Series(macd_hist) - pd.Series(macd_hist).shift(1)
+            except Exception as e:
+                logger.warning(f"Error calculating MACD {fast}_{slow}_{signal}: {e}")
+                suffix = f'{fast}_{slow}_{signal}'
+                features[f'macd_{suffix}'] = 0.0
+                features[f'macd_signal_{suffix}'] = 0.0
+                features[f'macd_hist_{suffix}'] = 0.0
+                features[f'macd_cross_{suffix}'] = 0
+                features[f'macd_momentum_{suffix}'] = 0.0
 
         # Stochastic variations
         for k_period, d_period in [(14, 3), (21, 5), (5, 3)]:
-            k, d = talib.STOCH(high, low, close, fastk_period=k_period, slowd_period=d_period)
-            suffix = f'{k_period}_{d_period}'
+            try:
+                k, d = talib.STOCH(high, low, close, fastk_period=k_period, slowd_period=d_period)
+                suffix = f'{k_period}_{d_period}'
 
-            features[f'stoch_k_{suffix}'] = k
-            features[f'stoch_d_{suffix}'] = d
-            features[f'stoch_cross_{suffix}'] = ((k > d) & (k.shift(1) <= d.shift(1))).astype(int)
-            features[f'stoch_oversold_{suffix}'] = ((k < 20) & (d < 20)).astype(int)
-            features[f'stoch_overbought_{suffix}'] = ((k > 80) & (d > 80)).astype(int)
+                features[f'stoch_k_{suffix}'] = k
+                features[f'stoch_d_{suffix}'] = d
+                features[f'stoch_cross_{suffix}'] = ((k > d) & (pd.Series(k).shift(1) <= pd.Series(d).shift(1))).astype(
+                    int)
+                features[f'stoch_oversold_{suffix}'] = ((k < 20) & (d < 20)).astype(int)
+                features[f'stoch_overbought_{suffix}'] = ((k > 80) & (d > 80)).astype(int)
+            except Exception as e:
+                logger.warning(f"Error calculating Stochastic {k_period}_{d_period}: {e}")
+                suffix = f'{k_period}_{d_period}'
+                features[f'stoch_k_{suffix}'] = 50.0
+                features[f'stoch_d_{suffix}'] = 50.0
+                features[f'stoch_cross_{suffix}'] = 0
+                features[f'stoch_oversold_{suffix}'] = 0
+                features[f'stoch_overbought_{suffix}'] = 0
 
         # Williams %R
         for period in [10, 14, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'williams_r_{period}'] = talib.WILLR(high, low, close, timeperiod=period)
+            try:
+                features[f'williams_r_{period}'] = talib.WILLR(high, low, close, timeperiod=period)
+            except Exception as e:
+                logger.warning(f"Error calculating Williams %R {period}: {e}")
+                features[f'williams_r_{period}'] = -50.0
 
         # CCI
         for period in [14, 20, 30]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'cci_{period}'] = talib.CCI(high, low, close, timeperiod=period)
+            try:
+                features[f'cci_{period}'] = talib.CCI(high, low, close, timeperiod=period)
+            except Exception as e:
+                logger.warning(f"Error calculating CCI {period}: {e}")
+                features[f'cci_{period}'] = 0.0
 
         # MFI
         for period in [14, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'mfi_{period}'] = talib.MFI(high, low, close, volume, timeperiod=period)
+            try:
+                features[f'mfi_{period}'] = talib.MFI(high, low, close, volume, timeperiod=period)
+            except Exception as e:
+                logger.warning(f"Error calculating MFI {period}: {e}")
+                features[f'mfi_{period}'] = 50.0
 
         # ADX and directional indicators
         for period in [14, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'adx_{period}'] = talib.ADX(high, low, close, timeperiod=period)
-            features[f'plus_di_{period}'] = talib.PLUS_DI(high, low, close, timeperiod=period)
-            features[f'minus_di_{period}'] = talib.MINUS_DI(high, low, close, timeperiod=period)
-            features[f'di_diff_{period}'] = features[f'plus_di_{period}'] - features[f'minus_di_{period}']
+            try:
+                features[f'adx_{period}'] = talib.ADX(high, low, close, timeperiod=period)
+                features[f'plus_di_{period}'] = talib.PLUS_DI(high, low, close, timeperiod=period)
+                features[f'minus_di_{period}'] = talib.MINUS_DI(high, low, close, timeperiod=period)
+                features[f'di_diff_{period}'] = features[f'plus_di_{period}'] - features[f'minus_di_{period}']
 
-            # Trend strength
-            features[f'trend_strength_{period}'] = features[f'adx_{period}'] * np.sign(features[f'di_diff_{period}'])
+                # Trend strength
+                features[f'trend_strength_{period}'] = features[f'adx_{period}'] * np.sign(
+                    features[f'di_diff_{period}'])
+            except Exception as e:
+                logger.warning(f"Error calculating ADX {period}: {e}")
+                features[f'adx_{period}'] = 0.0
+                features[f'plus_di_{period}'] = 0.0
+                features[f'minus_di_{period}'] = 0.0
+                features[f'di_diff_{period}'] = 0.0
+                features[f'trend_strength_{period}'] = 0.0
 
         # Aroon
         for period in [14, 25]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            aroon_up, aroon_down = talib.AROON(high, low, timeperiod=period)
-            features[f'aroon_up_{period}'] = aroon_up
-            features[f'aroon_down_{period}'] = aroon_down
-            features[f'aroon_osc_{period}'] = aroon_up - aroon_down
+            try:
+                aroon_up, aroon_down = talib.AROON(high, low, timeperiod=period)
+                features[f'aroon_up_{period}'] = aroon_up
+                features[f'aroon_down_{period}'] = aroon_down
+                features[f'aroon_osc_{period}'] = aroon_up - aroon_down
+            except Exception as e:
+                logger.warning(f"Error calculating Aroon {period}: {e}")
+                features[f'aroon_up_{period}'] = 50.0
+                features[f'aroon_down_{period}'] = 50.0
+                features[f'aroon_osc_{period}'] = 0.0
 
         # Ultimate Oscillator
-        features['ultimate_osc'] = talib.ULTOSC(high, low, close)
+        try:
+            features['ultimate_osc'] = talib.ULTOSC(high, low, close)
+        except Exception as e:
+            logger.warning(f"Error calculating Ultimate Oscillator: {e}")
+            features['ultimate_osc'] = 50.0
 
         # ROC
         for period in [5, 10, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'roc_{period}'] = talib.ROC(close, timeperiod=period)
+            try:
+                features[f'roc_{period}'] = talib.ROC(close, timeperiod=period)
+            except Exception as e:
+                logger.warning(f"Error calculating ROC {period}: {e}")
+                features[f'roc_{period}'] = 0.0
 
         # CMO
         for period in [14, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'cmo_{period}'] = talib.CMO(close, timeperiod=period)
+            try:
+                features[f'cmo_{period}'] = talib.CMO(close, timeperiod=period)
+            except Exception as e:
+                logger.warning(f"Error calculating CMO {period}: {e}")
+                features[f'cmo_{period}'] = 0.0
 
         # PPO
-        features['ppo'] = talib.PPO(close)
+        try:
+            features['ppo'] = talib.PPO(close)
+        except Exception as e:
+            logger.warning(f"Error calculating PPO: {e}")
+            features['ppo'] = 0.0
 
         # TRIX
         for period in [14, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
-            features[f'trix_{period}'] = talib.TRIX(close, timeperiod=period)
+            try:
+                features[f'trix_{period}'] = talib.TRIX(close, timeperiod=period)
+            except Exception as e:
+                logger.warning(f"Error calculating TRIX {period}: {e}")
+                features[f'trix_{period}'] = 0.0
 
         return features
 
@@ -556,7 +710,7 @@ class EnhancedFeatureEngineer:
         features['volume_at_high'] = df['volume'] * (df['close'] == df['high']).astype(int)
         features['volume_at_low'] = df['volume'] * (df['close'] == df['low']).astype(int)
         features['volume_at_close'] = df['volume'] * (
-                    abs(df['close'] - df['high']) < abs(df['close'] - df['low'])).astype(int)
+                abs(df['close'] - df['high']) < abs(df['close'] - df['low'])).astype(int)
 
         # Order flow imbalance proxy
         features['order_flow_imbalance'] = (df['close'] - df['open']) * df['volume']
@@ -564,8 +718,9 @@ class EnhancedFeatureEngineer:
         features['ofi_std'] = features['order_flow_imbalance'].rolling(20).std()
         features['ofi_zscore'] = (features['order_flow_imbalance'] - features['ofi_ma']) / (features['ofi_std'] + 1e-10)
 
-        # Microstructure noise
-        features['noise_ratio'] = features['hl_spread'] / features['volatility_20d']
+        # Microstructure noise - calculate volatility here if needed
+        volatility_20d = df['close'].pct_change().rolling(20).std() * np.sqrt(252)
+        features['noise_ratio'] = features['hl_spread'] / (volatility_20d + 1e-10)
 
         # Time-weighted average price
         features['twap'] = (df['high'] + df['low'] + df['close']) / 3
@@ -588,8 +743,6 @@ class EnhancedFeatureEngineer:
 
         # Rolling statistics
         for period in [5, 10, 20, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             rolling_returns = df['close'].pct_change().rolling(period)
 
             # Higher moments
@@ -610,51 +763,37 @@ class EnhancedFeatureEngineer:
 
         # Hurst exponent
         for period in [20, 50, 100]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'hurst_{period}'] = df['close'].rolling(period).apply(
                 lambda x: self._calculate_hurst_exponent(x.values) if len(x) == period else 0.5
             )
 
         # Entropy
         for period in [20, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'entropy_{period}'] = returns.rolling(period).apply(
                 lambda x: stats.entropy(np.histogram(x, bins=10)[0] + 1e-10)
             )
 
         # Price efficiency (Variance Ratio Test)
         for period in [10, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'efficiency_ratio_{period}'] = self._calculate_efficiency_ratio(df['close'], period)
 
         # Z-score
         for period in [20, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             mean = df['close'].rolling(period).mean()
             std = df['close'].rolling(period).std()
             features[f'zscore_{period}'] = (df['close'] - mean) / (std + 1e-10)
 
         # Percentile rank
         for period in [20, 50, 100]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'percentile_rank_{period}'] = df['close'].rolling(period).rank(pct=True)
 
         # Mean reversion indicators
         for period in [20, 50]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             ma = df['close'].rolling(period).mean()
             features[f'mean_reversion_score_{period}'] = -abs(df['close'] - ma) / ma
 
         # Trend consistency
         for period in [10, 20]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             positive_days = (df['close'].pct_change() > 0).rolling(period).sum()
             features[f'trend_consistency_{period}'] = positive_days / period
 
@@ -664,10 +803,11 @@ class EnhancedFeatureEngineer:
         """Create candlestick pattern features"""
         features = {}
 
-        open_price = df['open'].values
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
+        # Ensure float64 for TA-Lib
+        open_price = df['open'].astype('float64').values
+        high = df['high'].astype('float64').values
+        low = df['low'].astype('float64').values
+        close = df['close'].astype('float64').values
 
         # Basic candle properties
         body = close - open_price
@@ -696,12 +836,19 @@ class EnhancedFeatureEngineer:
         ]
 
         for name, func in pattern_functions:
-            pattern = func(open_price, high, low, close)
-            features[name] = pattern / 100  # Normalize to -1, 0, 1
+            try:
+                pattern = func(open_price, high, low, close)
+                features[name] = pattern / 100  # Normalize to -1, 0, 1
 
-            # Pattern strength (how many periods since last occurrence)
-            last_pattern = pd.Series(pattern).replace(0, np.nan).fillna(method='ffill')
-            features[f'{name}_strength'] = pd.Series(pattern).index - last_pattern.index
+                # Pattern strength (how many periods since last occurrence)
+                pattern_series = pd.Series(pattern, index=df.index)
+                last_pattern = pattern_series.replace(0, np.nan).fillna(method='ffill')
+                features[f'{name}_strength'] = (pd.Series(range(len(pattern_series)), index=df.index) -
+                                                pd.Series(range(len(last_pattern)), index=df.index))
+            except Exception as e:
+                logger.warning(f"Error calculating pattern {name}: {e}")
+                features[name] = 0
+                features[f'{name}_strength'] = 0
 
         # Custom patterns
 
@@ -728,8 +875,6 @@ class EnhancedFeatureEngineer:
 
         # Consecutive patterns
         for period in [3, 5]:
-            if len(df) < period + 10:  # Need extra data for calculation
-                continue
             features[f'consecutive_up_{period}'] = (df['close'] > df['open']).rolling(period).sum() == period
             features[f'consecutive_down_{period}'] = (df['close'] < df['open']).rolling(period).sum() == period
 
@@ -832,18 +977,26 @@ class EnhancedFeatureEngineer:
         """Create market regime features"""
         features = {}
 
+        # Ensure float64 for TA-Lib
+        close = df['close'].astype('float64').values
+
         # Trend regime
-        sma_20 = talib.SMA(df['close'].values, 20)
-        sma_50 = talib.SMA(df['close'].values, 50)
-        sma_200 = talib.SMA(df['close'].values, 200)
+        try:
+            sma_20 = talib.SMA(close, 20)
+            sma_50 = talib.SMA(close, 50)
+            sma_200 = talib.SMA(close, 200)
 
-        features['trend_regime_bullish'] = (
-                (df['close'] > sma_20) & (sma_20 > sma_50) & (sma_50 > sma_200)
-        ).astype(int)
+            features['trend_regime_bullish'] = (
+                    (df['close'] > sma_20) & (sma_20 > sma_50) & (sma_50 > sma_200)
+            ).astype(int)
 
-        features['trend_regime_bearish'] = (
-                (df['close'] < sma_20) & (sma_20 < sma_50) & (sma_50 < sma_200)
-        ).astype(int)
+            features['trend_regime_bearish'] = (
+                    (df['close'] < sma_20) & (sma_20 < sma_50) & (sma_50 < sma_200)
+            ).astype(int)
+        except Exception as e:
+            logger.warning(f"Error calculating trend regime: {e}")
+            features['trend_regime_bullish'] = 0
+            features['trend_regime_bearish'] = 0
 
         # Volatility regime (using rolling percentile)
         vol = df['close'].pct_change().rolling(20).std()
@@ -860,11 +1013,16 @@ class EnhancedFeatureEngineer:
         features['low_volume_regime'] = (vol_percentile < 0.3).astype(int)
 
         # Momentum regime
-        roc_20 = talib.ROC(df['close'].values, 20)
-        momentum_percentile = pd.Series(roc_20).rolling(252).rank(pct=True)
+        try:
+            roc_20 = talib.ROC(close, 20)
+            momentum_percentile = pd.Series(roc_20).rolling(252).rank(pct=True)
 
-        features['strong_momentum_regime'] = (momentum_percentile > 0.8).astype(int)
-        features['weak_momentum_regime'] = (momentum_percentile < 0.2).astype(int)
+            features['strong_momentum_regime'] = (momentum_percentile > 0.8).astype(int)
+            features['weak_momentum_regime'] = (momentum_percentile < 0.2).astype(int)
+        except Exception as e:
+            logger.warning(f"Error calculating momentum regime: {e}")
+            features['strong_momentum_regime'] = 0
+            features['weak_momentum_regime'] = 0
 
         # Market efficiency regime
         efficiency_ratio = self._calculate_efficiency_ratio(df['close'], 20)
@@ -941,6 +1099,12 @@ class EnhancedFeatureEngineer:
 
     def _calculate_divergence(self, price_series, indicator_series, lookback=14):
         """Calculate divergence between price and indicator"""
+        # Ensure we're working with pandas Series
+        if isinstance(price_series, np.ndarray):
+            price_series = pd.Series(price_series)
+        if isinstance(indicator_series, np.ndarray):
+            indicator_series = pd.Series(indicator_series)
+
         price_highs = price_series.rolling(lookback).max()
         price_lows = price_series.rolling(lookback).min()
 

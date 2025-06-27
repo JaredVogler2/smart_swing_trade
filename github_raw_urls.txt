@@ -1,6 +1,12 @@
 Raw GitHub URLs for smart_swing_trade Python Files
 ================================================================================
 
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\add_sophisticated_config.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/add_sophisticated_config.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\advanced_backtesting.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/advanced_backtesting.py
+--------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\analysis\news_sentiment.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/analysis/news_sentiment.py
 --------------------------------------------------------------------------------
@@ -9,6 +15,18 @@ GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/ref
 --------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\analysis\technical.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/analysis/technical.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\api_server.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/api_server.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\backup_20250627_130010\advanced_backtesting.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/backup_20250627_130010/advanced_backtesting.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\backup_20250627_130010\main.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/backup_20250627_130010/main.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\backup_20250627_130010\streamlit_dashboard.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/backup_20250627_130010/streamlit_dashboard.py
 --------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\config\settings.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/config/settings.py
@@ -25,8 +43,20 @@ GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/ref
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\data\market_data.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/data/market_data.py
 --------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\debug_data_fetch.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/debug_data_fetch.py
+--------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\debug_features.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/debug_features.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\enhanced_advanced_backtesting.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/enhanced_advanced_backtesting.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\enhanced_main.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/enhanced_main.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\enhanced_streamlit_dashboard.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/enhanced_streamlit_dashboard.py
 --------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\execution\broker_interface.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution/broker_interface.py
@@ -34,11 +64,35 @@ GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/ref
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\execution\order_manager.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution/order_manager.py
 --------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\fix_adaptive_features.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/fix_adaptive_features.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\fix_debug.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/fix_debug.py
+--------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\main.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/main.py
 --------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\main_enhanced.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/main_enhanced.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\advanced_feature_engineering.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/advanced_feature_engineering.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\enhanced_ensemble.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/enhanced_ensemble.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\enhanced_features.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/enhanced_features.py
+--------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\ensemble.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/ensemble.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\ensemble_gpu.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/ensemble_gpu.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\ensemble_gpu_windows.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/ensemble_gpu_windows.py
 --------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\models\features.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/models/features.py
@@ -52,6 +106,9 @@ GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/ref
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\monitoring\performance.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/monitoring/performance.py
 --------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\purged_walkforward.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/purged_walkforward.py
+--------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\risk\position_sizer.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/risk/position_sizer.py
 --------------------------------------------------------------------------------
@@ -60,4 +117,16 @@ GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/ref
 --------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\risk\stop_loss.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/risk/stop_loss.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\sophisticated_config.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/sophisticated_config.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\streamlit_dashboard.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/streamlit_dashboard.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\test_buffer_period.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/test_buffer_period.py
+--------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\watchlist_feature_engineering.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/watchlist_feature_engineering.py
 --------------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from models.ensemble_gpu_windows import GPUEnsembleModel
 from models.enhanced_features import EnhancedFeatureEngineer
 from config.watchlist import WATCHLIST, SECTOR_MAPPING
 from risk.risk_manager import RiskManager
+from execution_simulator import ExecutionSimulator, ExecutionConfig
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -389,17 +390,24 @@ class PortfolioManager:
 
 class HedgeFundBacktester:
     """Sophisticated hedge fund style backtesting engine"""
-    
+
     def __init__(self, config: BacktestConfig = None):
         self.config = config or BacktestConfig()
         self.data_manager = DataManager()
-        self.execution_sim = ExecutionSimulator(self.config)
+
+        # Initialize ExecutionSimulator with config
+        exec_config = ExecutionConfig()
+        exec_config.commission_per_share = self.config.commission_per_share
+        exec_config.min_commission = self.config.min_commission
+        exec_config.base_slippage_bps = self.config.slippage_bps
+        self.execution_sim = ExecutionSimulator(exec_config)
+
         self.feature_engineer = EnhancedFeatureEngineer(use_gpu=torch.cuda.is_available())
-        
+
         # Setup GPU
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {self.device}")
-        
+
         # Initialize components
         self.models = {}
         self.model_performance = defaultdict(list)
@@ -629,52 +637,34 @@ class HedgeFundBacktester:
         signals.sort(key=lambda x: x['ml_confidence'], reverse=True)
         
         return signals[:5]  # Take top 5 signals
-    
+
     def _check_exits(self, portfolio: PortfolioManager,
-                    market_snapshot: Dict[str, pd.DataFrame],
-                    date: pd.Timestamp):
+                     market_snapshot: Dict[str, pd.DataFrame],
+                     date: pd.Timestamp):
         """Check and execute exit conditions"""
         positions_to_close = []
-        
+
         for symbol, position in portfolio.positions.items():
             if symbol not in market_snapshot:
                 continue
-            
+
             df = market_snapshot[symbol]
             current_price = df['close'].iloc[-1]
             daily_volume = df['volume'].iloc[-1]
-            
-            # Check exit conditions
-            exit_reason = None
-            
-            # Stop loss
-            if current_price <= position.initial_stop:
-                exit_reason = "stop_loss"
-            
-            # Trailing stop
-            elif current_price <= position.trailing_stop:
-                exit_reason = "trailing_stop"
-            
-            # Take profit
-            elif current_price >= position.take_profit:
-                exit_reason = "take_profit"
-            
-            # Time-based exit
-            elif position.holding_period >= self.config.max_holding_period:
-                exit_reason = "max_holding_period"
-            
+            volatility = df['volatility'].iloc[-1] if 'volatility' in df.columns else 0.02
+
+            # ... exit condition checks ...
+
             if exit_reason:
-                positions_to_close.append((symbol, current_price, daily_volume, exit_reason))
-        
+                positions_to_close.append((symbol, current_price, daily_volume, volatility, exit_reason))
+
         # Execute exits
-        for symbol, price, volume, reason in positions_to_close:
+        for symbol, price, volume, volatility, reason in positions_to_close:
             exec_price, costs, commission = self.execution_sim.simulate_exit(
-                symbol, price, portfolio.positions[symbol].quantity, volume
+                symbol, price, portfolio.positions[symbol].quantity, volume, volatility
             )
-            
+
             portfolio.close_position(symbol, exec_price, date, reason, costs, commission)
-            
-            logger.info(f"Closed {symbol} @ ${exec_price:.2f} - {reason}")
     
     def _execute_signals(self, portfolio: PortfolioManager, 
                         signals: List[Dict],

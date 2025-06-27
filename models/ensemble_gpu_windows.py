@@ -13,7 +13,7 @@ import warnings
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, matthews_corrcoef, log_loss
+    roc_auc_score, matthews_corrcoef, log_loss, precision_recall_curve
 )
 import xgboost as xgb
 import lightgbm as lgb
@@ -75,7 +75,24 @@ class AttentionLSTM(nn.Module):
         self.dropout5 = nn.Dropout(dropout)
 
         self.fc3 = nn.Linear(64, 1)
-        self.sigmoid = nn.Sigmoid()
+        # No sigmoid - will use BCEWithLogitsLoss
+
+        # Initialize weights properly
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights with Xavier/Glorot initialization"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.LSTM):
+                for param in module.parameters():
+                    if len(param.shape) >= 2:
+                        nn.init.orthogonal_(param.data)
+                    else:
+                        nn.init.normal_(param.data)
 
     def forward(self, x):
         # LSTM layers with residual connections
@@ -109,8 +126,7 @@ class AttentionLSTM(nn.Module):
         out = self.dropout5(out)
 
         out = self.fc3(out)
-        out = self.sigmoid(out)
-
+        # Return raw logits
         return out
 
 
@@ -123,6 +139,7 @@ class GPUEnsembleModel:
         self.feature_engineer = FeatureEngineer(use_gpu=False)  # Disable GPU for feature engineering
         self.is_trained = False
         self.feature_importance = {}
+        self.optimal_threshold = 0.5  # Will be optimized during training
 
         # Dynamic model weights based on performance
         self.model_weights = {
@@ -136,7 +153,7 @@ class GPUEnsembleModel:
         self._setup_gpu()
 
         # Model parameters
-        self.sequence_length = Config.SEQUENCE_LENGTH
+        self.sequence_length = Config.SEQUENCE_LENGTH if hasattr(Config, 'SEQUENCE_LENGTH') else 20
         self.prediction_horizon = 3
         self.batch_size = 32
 
@@ -153,9 +170,10 @@ class GPUEnsembleModel:
             self.device = torch.device('cuda')
 
             # Set memory fraction
-            torch.cuda.set_per_process_memory_fraction(
-                Config.GPU_MEMORY_FRACTION
-            )
+            if hasattr(Config, 'GPU_MEMORY_FRACTION'):
+                torch.cuda.set_per_process_memory_fraction(
+                    Config.GPU_MEMORY_FRACTION
+                )
 
             # Enable TF32 for Ampere GPUs
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -202,6 +220,7 @@ class GPUEnsembleModel:
         print(f"DEBUG: Processing {len(train_data)} symbols for training")
         for symbol, df in train_data.items():
             print(f"DEBUG: Processing {symbol} with {len(df)} rows")
+
             if len(df) < self.sequence_length + 100:
                 continue
 
@@ -227,7 +246,6 @@ class GPUEnsembleModel:
             y_train_all.append(target)
 
         # Combine all data
-        print(f"DEBUG: Concatenating {len(X_train_all)} feature sets")
         X_train = pd.concat(X_train_all)
         y_train = pd.concat(y_train_all)
 
@@ -280,10 +298,10 @@ class GPUEnsembleModel:
         return target
 
     def _train_deep_models(self, X: pd.DataFrame, y: pd.Series):
-        """Train deep learning models with mixed precision"""
+        """Train deep learning models with mixed precision - keeping natural imbalance"""
         logger.info("Training deep learning models on GPU...")
 
-        # Prepare sequences
+        # Prepare sequences WITHOUT balancing - keep natural distribution
         X_seq, y_seq = self._prepare_lstm_data(X, y)
 
         # Create data loader
@@ -298,20 +316,34 @@ class GPUEnsembleModel:
             dataset, [train_size, val_size]
         )
 
+        # In _train_deep_models, before creating the DataLoader:
+        print(f"X_seq shape: {X_seq.shape}")
+        print(f"X_seq has NaN: {np.isnan(X_seq).any()}")
+        print(f"X_seq has Inf: {np.isinf(X_seq).any()}")
+        print(f"y_seq has NaN: {np.isnan(y_seq).any()}")
+
+        # Check for extreme values
+        print(f"X_seq stats - min: {X_seq.min()}, max: {X_seq.max()}, mean: {X_seq.mean()}")
+
+        # Find which features have issues
+        if np.isnan(X_seq).any():
+            nan_features = np.where(np.isnan(X_seq).any(axis=(0, 1)))[0]
+            print(f"Features with NaN: {nan_features}")
+
         train_loader = DataLoader(
             train_dataset, batch_size=self.batch_size,
-            shuffle=True, pin_memory=True
+            shuffle=True, pin_memory=True, num_workers=0
         )
         val_loader = DataLoader(
             val_dataset, batch_size=self.batch_size,
-            shuffle=False, pin_memory=True
+            shuffle=False, pin_memory=True, num_workers=0
         )
 
         # Train Attention LSTM
         self._train_attention_lstm(train_loader, val_loader, X_seq.shape)
 
     def _train_attention_lstm(self, train_loader, val_loader, input_shape):
-        """Train attention LSTM with mixed precision"""
+        """Train attention LSTM with proper handling of imbalanced data"""
         model = AttentionLSTM(
             input_dim=input_shape[-1],
             hidden_dims=[256, 128, 64],
@@ -319,24 +351,48 @@ class GPUEnsembleModel:
             dropout=0.3
         ).to(self.device)
 
+        # Calculate class distribution for logging
+        all_labels = []
+        for _, labels in train_loader:
+            all_labels.extend(labels.numpy())
+
+        pos_count = sum(all_labels)
+        neg_count = len(all_labels) - pos_count
+        pos_ratio = pos_count / len(all_labels)
+
+        logger.info(f"Training class distribution - Negative: {neg_count} ({(1 - pos_ratio) * 100:.1f}%), "
+                    f"Positive: {pos_count} ({pos_ratio * 100:.1f}%)")
+
+        # Use class weights to handle imbalance
+        # This makes the rare positive examples more important without changing the data distribution
+        pos_weight = (1 - pos_ratio) / pos_ratio if pos_ratio > 0 else 1.0
+        pos_weight_tensor = torch.tensor([pos_weight]).to(self.device)
+
+        logger.info(f"Using pos_weight: {pos_weight:.2f} to handle class imbalance")
+
         # Use mixed precision training
         scaler = GradScaler()
 
-        criterion = nn.BCELoss()
-        optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.01)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', patience=5, factor=0.5
-        )
+        # Loss function that handles imbalance
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
 
-        # Training loop with early stopping
-        best_val_loss = float('inf')
-        patience = 10
+        # Conservative learning rate and L2 regularization
+        optimizer = optim.AdamW(model.parameters(), lr=5e-5, weight_decay=0.1)
+
+        # Cosine annealing scheduler for stable training
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-6)
+
+        # Training metrics
+        best_val_f1 = 0  # Use F1 score instead of loss for imbalanced data
+        patience = 15
         patience_counter = 0
 
-        for epoch in range(50):
+        for epoch in range(100):  # More epochs with early stopping
             # Training
             model.train()
             train_loss = 0
+            train_preds = []
+            train_labels = []
 
             for batch_X, batch_y in train_loader:
                 batch_X = batch_X.to(self.device)
@@ -344,21 +400,56 @@ class GPUEnsembleModel:
 
                 optimizer.zero_grad()
 
-                # Mixed precision forward pass
+                # Forward pass with autocast
                 with autocast():
                     outputs = model(batch_X)
                     loss = criterion(outputs, batch_y)
 
-                # Backward pass
+                    # Add L2 regularization to prevent overfitting to majority class
+                    l2_lambda = 0.01
+                    l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
+                    loss = loss + l2_lambda * l2_norm
+
+                # Skip batch if loss is NaN
+                if torch.isnan(loss):
+                    logger.warning(f"NaN loss detected at epoch {epoch}")
+                    continue
+
+                # Backward pass with gradient clipping
                 scaler.scale(loss).backward()
+
+                # Gradient clipping to prevent explosions
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+
                 scaler.step(optimizer)
                 scaler.update()
 
                 train_loss += loss.item()
 
+                # Collect predictions for metrics
+                with torch.no_grad():
+                    probs = torch.sigmoid(outputs)
+                    train_preds.extend(probs.cpu().numpy())
+                    train_labels.extend(batch_y.cpu().numpy())
+
+            # Calculate training metrics
+            train_preds = np.array(train_preds)
+            train_labels = np.array(train_labels)
+
+            # Use 0.5 threshold for now (can optimize later)
+            train_preds_binary = (train_preds > 0.5).astype(int)
+
+            # Calculate metrics that matter for imbalanced data
+            train_precision = precision_score(train_labels, train_preds_binary, zero_division=0)
+            train_recall = recall_score(train_labels, train_preds_binary, zero_division=0)
+            train_f1 = f1_score(train_labels, train_preds_binary, zero_division=0)
+
             # Validation
             model.eval()
             val_loss = 0
+            val_preds = []
+            val_labels = []
 
             with torch.no_grad():
                 for batch_X, batch_y in val_loader:
@@ -369,16 +460,44 @@ class GPUEnsembleModel:
                         outputs = model(batch_X)
                         loss = criterion(outputs, batch_y)
 
-                    val_loss += loss.item()
+                    if not torch.isnan(loss):
+                        val_loss += loss.item()
 
-            val_loss /= len(val_loader)
-            scheduler.step(val_loss)
+                        probs = torch.sigmoid(outputs)
+                        val_preds.extend(probs.cpu().numpy())
+                        val_labels.extend(batch_y.cpu().numpy())
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            # Calculate validation metrics
+            val_preds = np.array(val_preds)
+            val_labels = np.array(val_labels)
+            val_preds_binary = (val_preds > 0.5).astype(int)
+
+            val_precision = precision_score(val_labels, val_preds_binary, zero_division=0)
+            val_recall = recall_score(val_labels, val_preds_binary, zero_division=0)
+            val_f1 = f1_score(val_labels, val_preds_binary, zero_division=0)
+
+            # Also calculate AUC-ROC which is good for imbalanced data
+            try:
+                val_auc = roc_auc_score(val_labels, val_preds)
+            except:
+                val_auc = 0.5
+
+            # Update learning rate
+            scheduler.step()
+
+            # Save best model based on F1 score (balances precision and recall)
+            if val_f1 > best_val_f1:
+                best_val_f1 = val_f1
                 patience_counter = 0
-                # Save best model
                 self.models['attention_lstm'] = model
+
+                # Find optimal threshold
+                precisions, recalls, thresholds = precision_recall_curve(val_labels, val_preds)
+                f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-8)
+                best_threshold_idx = np.argmax(f1_scores)
+                self.optimal_threshold = thresholds[best_threshold_idx] if best_threshold_idx < len(thresholds) else 0.5
+
+                logger.info(f"New best model! F1: {val_f1:.4f}, Optimal threshold: {self.optimal_threshold:.3f}")
             else:
                 patience_counter += 1
 
@@ -386,9 +505,22 @@ class GPUEnsembleModel:
                 logger.info(f"Early stopping at epoch {epoch}")
                 break
 
-            if epoch % 10 == 0:
-                logger.info(f"Epoch {epoch}, Train Loss: {train_loss / len(train_loader):.4f}, "
-                            f"Val Loss: {val_loss:.4f}")
+            # Log progress every 5 epochs
+            if epoch % 5 == 0:
+                avg_train_loss = train_loss / len(train_loader)
+                avg_val_loss = val_loss / len(val_loader) if len(val_loader) > 0 else 0
+
+                logger.info(f"Epoch {epoch}:")
+                logger.info(f"  Train - Loss: {avg_train_loss:.4f}, F1: {train_f1:.4f}, "
+                            f"Precision: {train_precision:.4f}, Recall: {train_recall:.4f}")
+                logger.info(f"  Val   - Loss: {avg_val_loss:.4f}, F1: {val_f1:.4f}, "
+                            f"Precision: {val_precision:.4f}, Recall: {val_recall:.4f}, AUC: {val_auc:.4f}")
+
+        # Set default threshold if no model was saved
+        if 'attention_lstm' not in self.models:
+            logger.warning("No model met improvement criteria, using final model")
+            self.models['attention_lstm'] = model
+            self.optimal_threshold = 0.5
 
     def _train_tree_models_gpu(self, X: pd.DataFrame, y: pd.Series):
         """Train tree models with GPU acceleration"""
@@ -413,7 +545,8 @@ class GPUEnsembleModel:
             'gamma': 0.1,
             'reg_alpha': 0.05,
             'reg_lambda': 0.1,
-            'scale_pos_weight': len(y_train[y_train == 0]) / len(y_train[y_train == 1])  # Handle imbalance
+            'scale_pos_weight': len(y_train[y_train == 0]) / len(y_train[y_train == 1]) if len(
+                y_train[y_train == 1]) > 0 else 1
         }
 
         self.models['xgboost'] = xgb.XGBClassifier(**xgb_params)
@@ -503,7 +636,11 @@ class GPUEnsembleModel:
             total_weight += weight
 
         ensemble_prob /= total_weight
-        ensemble_pred = 1 if ensemble_prob > 0.65 else 0
+
+        # Be more conservative with predictions for imbalanced data
+        # Require higher confidence for positive predictions
+        conservative_threshold = 0.7  # Instead of 0.5
+        ensemble_pred = 1 if ensemble_prob > conservative_threshold else 0
 
         # Calculate confidence
         model_preds = list(predictions.values())
@@ -530,7 +667,7 @@ class GPUEnsembleModel:
         }
 
     def _predict_lstm(self, features: pd.DataFrame) -> Tuple[int, float]:
-        """Get LSTM prediction"""
+        """Get LSTM prediction with optimal threshold"""
         model = self.models['attention_lstm']
         model.eval()
 
@@ -545,10 +682,14 @@ class GPUEnsembleModel:
 
         # Predict
         with torch.no_grad():
-            output = model(X_tensor)
-            prob = output.cpu().numpy()[0, 0]
+            with autocast():
+                output = model(X_tensor)  # Raw logits
+                # Apply sigmoid to get probability
+                prob = torch.sigmoid(output).cpu().numpy()[0, 0]
 
-        pred = 1 if prob > 0.5 else 0
+        # Use optimal threshold if available, otherwise default to 0.5
+        threshold = getattr(self, 'optimal_threshold', 0.5)
+        pred = 1 if prob > threshold else 0
 
         return pred, prob
 
@@ -601,6 +742,8 @@ class GPUEnsembleModel:
         if 'attention_lstm' in self.models:
             torch.save({
                 'model_state_dict': self.models['attention_lstm'].state_dict(),
+                'input_dim': self.models['attention_lstm'].fc3.in_features,
+                'optimal_threshold': self.optimal_threshold
             }, os.path.join(path, 'attention_lstm_model.pth'))
 
         # Save tree models
@@ -616,7 +759,8 @@ class GPUEnsembleModel:
             'scaler': self.scaler,
             'model_weights': self.model_weights,
             'feature_importance': self.feature_importance,
-            'training_history': self.training_history
+            'training_history': self.training_history,
+            'optimal_threshold': self.optimal_threshold
         }, os.path.join(path, 'model_config.pkl'))
 
         logger.info(f"Models saved to {path}")
@@ -633,21 +777,26 @@ class GPUEnsembleModel:
             self.model_weights = config['model_weights']
             self.feature_importance = config.get('feature_importance', {})
             self.training_history = config.get('training_history', [])
+            self.optimal_threshold = config.get('optimal_threshold', 0.5)
 
         # Load LSTM
         lstm_path = os.path.join(path, 'attention_lstm_model.pth')
         if os.path.exists(lstm_path):
-            # Create model first
-            dummy_shape = 100  # This will be set properly when loading
+            checkpoint = torch.load(lstm_path, map_location=self.device)
+
+            # Get input dimension from saved model or use default
+            input_dim = checkpoint.get('input_dim', 100)
+            self.optimal_threshold = checkpoint.get('optimal_threshold', 0.5)
+
+            # Create model
             model = AttentionLSTM(
-                input_dim=dummy_shape,
+                input_dim=input_dim,
                 hidden_dims=[256, 128, 64],
                 num_heads=8,
                 dropout=0.3
             ).to(self.device)
 
             # Load weights
-            checkpoint = torch.load(lstm_path, map_location=self.device)
             model.load_state_dict(checkpoint['model_state_dict'])
             model.eval()
             self.models['attention_lstm'] = model
