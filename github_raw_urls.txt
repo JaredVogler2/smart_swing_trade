@@ -64,6 +64,9 @@ GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/ref
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\execution\order_manager.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution/order_manager.py
 --------------------------------------------------------------------------------
+Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\execution_simulator.py
+GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution_simulator.py
+--------------------------------------------------------------------------------
 Local File: C:\Users\jared\PycharmProjects\smart_swing_trade\fix_adaptive_features.py
 GitHub URL: https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/fix_adaptive_features.py
 --------------------------------------------------------------------------------

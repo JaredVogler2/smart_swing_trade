@@ -809,7 +809,7 @@ class FeatureEngineer:
                 (lows2 > lows2.shift(lookback))
         )
 
-        return bullish_div.astype(int) - bearish_div.astype(int)
+        return (bullish_div.astype(int)).astype(float) - (bearish_div.astype(int)).astype(float)
 
     def _days_since_event(self, index: pd.DatetimeIndex,
                           event_dates: pd.DatetimeIndex) -> pd.Series:

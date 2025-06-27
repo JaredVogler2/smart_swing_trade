@@ -841,7 +841,7 @@ class AdvancedFeatureEngineer:
                 (ind_lows > ind_lows.shift(lookback))
         ).astype(int)
 
-        return bullish_div - bearish_div
+        return bullish_div.astype(float) - bearish_div.astype(float)
 
     def _calculate_efficiency_ratio(self, prices, period=10):
         """Calculate Kaufman's Efficiency Ratio"""

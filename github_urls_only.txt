@@ -19,6 +19,7 @@ https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main
 https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/enhanced_streamlit_dashboard.py
 https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution/broker_interface.py
 https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution/order_manager.py
+https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/execution_simulator.py
 https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/fix_adaptive_features.py
 https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/fix_debug.py
 https://raw.githubusercontent.com/JaredVogler2/smart_swing_trade/refs/heads/main/main.py

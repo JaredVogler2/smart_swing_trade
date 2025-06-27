@@ -1123,7 +1123,7 @@ class EnhancedFeatureEngineer:
                 (ind_lows > ind_lows.shift(lookback))
         ).astype(int)
 
-        return bullish_div - bearish_div
+        return bullish_div.astype(int).astype(float) - bearish_div.astype(int).astype(float)
 
     def _calculate_hurst_exponent(self, series):
         """Calculate Hurst exponent for a series"""
