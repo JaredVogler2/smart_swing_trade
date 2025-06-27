@@ -14,6 +14,7 @@ import threading
 import signal
 import json
 import numpy as np
+import pandas as pd  # <-- Add this line
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
